@@ -1,10 +1,13 @@
 /*
  * Cover-art / title-screen preview for the ROM browser.  See coverart.h.
  *
- * Reads "/IMGS/{c0}/{c1}/{CODE}.bmp" (120x80, 16bpp X1R5G5B5) directly off the SD
- * card, scales it down to half size (2x2 average), maps each pixel to a fixed
- * 6x6x6 palette cube (MEM_PALETTE[20..235]) and keeps the resulting 8bpp image
- * in a cache in cart SDRAM, so revisited and prefetched entries show instantly.
+ * Reads "/IMGS/{c0}/{c1}/{CODE}.bmp" directly off the SD card, either:
+ *  - 8bpp with its own palette (<= 216 colors, <= COVER_W x COVER_H, made by
+ *    tools/covers), copied as is, or
+ *  - 16bpp EZ-Flash-Omega (120x80), scaled down and dithered to a fixed 6x6x6
+ *    palette cube.
+ * Images use MEM_PALETTE[20..235] and are kept in a cache in cart SDRAM, so
+ * revisited and prefetched entries show instantly.
  */
 #include <string.h>
 #include <stdbool.h>
@@ -36,6 +39,8 @@ typedef struct {
 typedef struct {
   uint32_t gcode;                 // 0 = empty slot
   uint32_t lastuse;               // LRU stamp
+  uint32_t ownpal;                // pal holds the image palette (else: the cube)
+  uint16_t pal[CUBE_NCOLORS];
   uint8_t pix[COVER_BUF_SIZE];
 } t_pix_ent;
 
@@ -124,8 +129,117 @@ static bool gcode_is_alnum(uint32_t gc) {
   return true;
 }
 
-// Reads and converts the BMP for `gc` into `pix`.
-static bool load_cover_file(uint32_t gc, uint8_t *pix) {
+static inline uint32_t rd32(const uint8_t *p) {
+  return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+}
+
+// 16bpp (EZ-Flash Omega) BMP: scaled down to COVER_W x COVER_H (each output
+// pixel averages a 2x2 source block) and mapped to the fixed color cube.
+// Rows are streamed: an output row is emitted as soon as the two source rows
+// it needs have been read, whatever the row order of the file.
+static bool load_bmp16(FIL *fd, unsigned width, unsigned height, bool topdown,
+                       t_pix_ent *slot) {
+  if (width > COVER_SRC_W || height > COVER_SRC_H)
+    return false;
+  if (!cube_built)
+    build_cube();
+
+  unsigned dw = MAX(1u, width * COVER_W / COVER_SRC_W);
+  unsigned dh = MAX(1u, height * COVER_H / COVER_SRC_H);
+  unsigned ox = (COVER_W - dw) / 2, oy = (COVER_H - dh) / 2;
+  uint8_t xs[COVER_W];
+  for (unsigned dx = 0; dx < dw; dx++)
+    xs[dx] = dx * width / dw;
+
+  unsigned rowbytes = (width * 2 + 3) & ~3u;   // 4-byte aligned rows
+  uint8_t rowbuf[2][COVER_SRC_W * 2];
+  __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
+  memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
+
+  for (unsigned fr = 0; fr < height; fr++) {
+    uint8_t *cur = rowbuf[fr & 1], *prev = rowbuf[(fr & 1) ^ 1];
+    UINT rd;
+    if (FR_OK != f_read(fd, cur, rowbytes, &rd) || rd != rowbytes)
+      return false;
+
+    // Image row just read and the pair of rows (lo, lo + 1) now available.
+    unsigned r = topdown ? fr : height - 1 - fr;
+    const uint8_t *rlo, *rhi;
+    unsigned lo;
+    if (fr == 0) {
+      if (r != height - 1)
+        continue;          // Needs the next row too
+      lo = r; rlo = rhi = cur;           // Last row, paired with itself
+    } else {
+      lo = topdown ? r - 1 : r;
+      rlo = topdown ? prev : cur;
+      rhi = topdown ? cur : prev;
+    }
+
+    // Output rows are sampled at sy = dy * height / dh: find the one using lo.
+    unsigned dy = (lo * dh + height - 1) / height;
+    if (dy >= dh || dy * height / dh != lo) {
+      // A top-down file ends on its last row: emit rows sampling it alone.
+      if (!(topdown && r == height - 1))
+        continue;
+      dy = (r * dh + height - 1) / height;
+      if (dy >= dh || dy * height / dh != r)
+        continue;
+      rlo = rhi = cur;
+    }
+
+    for (unsigned dx = 0; dx < dw; dx++) {
+      unsigned x0 = xs[dx], x1 = MIN(x0 + 1, width - 1);
+      rowpix[ox + dx] = block_to_cube(rlo, rhi, x0, x1, dx, dy);
+    }
+    dma_memcpy16(&slot->pix[(oy + dy) * COVER_W], rowpix, COVER_W / 2);
+  }
+  slot->ownpal = 0;
+  return true;
+}
+
+// 8bpp BMP with its own palette (at most CUBE_NCOLORS colors, at most
+// COVER_W x COVER_H), as made by tools/covers: copied as is, much nicer than
+// dithering to the fixed cube and faster to load.
+static bool load_bmp8(FIL *fd, const uint8_t *hdr, unsigned width, unsigned height,
+                      bool topdown, t_pix_ent *slot) {
+  unsigned ncolors = rd32(&hdr[46]) ? rd32(&hdr[46]) : 256;
+  if (width > COVER_W || height > COVER_H || ncolors > CUBE_NCOLORS)
+    return false;
+
+  // The palette follows the info header (BGRA quads).
+  UINT rd;
+  uint8_t quads[CUBE_NCOLORS * 4];
+  if (FR_OK != f_lseek(fd, 14 + rd32(&hdr[14])) ||
+      FR_OK != f_read(fd, quads, ncolors * 4, &rd) || rd != ncolors * 4)
+    return false;
+  uint16_t pal[CUBE_NCOLORS];
+  memset(pal, 0, sizeof(pal));
+  for (unsigned i = 0; i < ncolors; i++)
+    pal[i] = (quads[i * 4 + 2] >> 3) | ((quads[i * 4 + 1] >> 3) << 5) | ((quads[i * 4] >> 3) << 10);
+  dma_memcpy16(slot->pal, pal, CUBE_NCOLORS);
+
+  if (FR_OK != f_lseek(fd, rd32(&hdr[10])))
+    return false;
+  unsigned ox = (COVER_W - width) / 2, oy = (COVER_H - height) / 2;
+  unsigned rowbytes = (width + 3) & ~3u;
+  uint8_t rowbuf[(COVER_W + 3) & ~3u];
+  __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
+  memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
+  for (unsigned fr = 0; fr < height; fr++) {
+    if (FR_OK != f_read(fd, rowbuf, rowbytes, &rd) || rd != rowbytes)
+      return false;
+    for (unsigned x = 0; x < width; x++)
+      rowpix[ox + x] = CUBE_PAL_BASE + MIN(rowbuf[x], ncolors - 1);
+    unsigned r = topdown ? fr : height - 1 - fr;
+    dma_memcpy16(&slot->pix[(oy + r) * COVER_W], rowpix, COVER_W / 2);
+  }
+  slot->ownpal = 1;
+  return true;
+}
+
+// Reads the BMP for `gc` into the cache slot.
+static bool load_cover_file(uint32_t gc, t_pix_ent *slot) {
   char path[64];
   int c0 = gc & 0xFF, c1 = (gc >> 8) & 0xFF, c2 = (gc >> 16) & 0xFF, c3 = gc >> 24;
   npf_snprintf(path, sizeof(path), "%s/%c/%c/%c%c%c%c.bmp",
@@ -141,43 +255,20 @@ static bool load_cover_file(uint32_t gc, uint8_t *pix) {
 
   if (FR_OK == f_read(&fd, hdr, sizeof(hdr), &rd) && rd == sizeof(hdr) &&
       hdr[0] == 'B' && hdr[1] == 'M') {
-    uint32_t dataoff = hdr[10] | (hdr[11] << 8) | (hdr[12] << 16) | (hdr[13] << 24);
-    int32_t  width   = hdr[18] | (hdr[19] << 8) | (hdr[20] << 16) | (hdr[21] << 24);
-    int32_t  rawh    = hdr[22] | (hdr[23] << 8) | (hdr[24] << 16) | (hdr[25] << 24);
+    int32_t  width   = rd32(&hdr[18]);
+    int32_t  rawh    = rd32(&hdr[22]);
     unsigned bpp     = hdr[28] | (hdr[29] << 8);
+    unsigned compr   = rd32(&hdr[30]);
     bool topdown = rawh < 0;
     int32_t height = topdown ? -rawh : rawh;
 
-    if (bpp == 16 && width > 0 && width <= COVER_SRC_W &&
-        height > 0 && height <= COVER_SRC_H && FR_OK == f_lseek(&fd, dataoff)) {
-      if (!cube_built)
-        build_cube();
-
+    if (width > 0 && height > 0) {
       // Pad letterbox (smaller images) with cube index 0 (= black).
-      dma_memset16(pix, dup8(CUBE_PAL_BASE), COVER_W * COVER_H / 2);
-
-      // The image is shown at half size: every 2x2 source block is averaged
-      // into one pixel, so two source rows are read per output row.
-      unsigned dw = ((unsigned)width + 1) / 2, dh = ((unsigned)height + 1) / 2;
-      unsigned rowbytes = ((unsigned)width * 2 + 3) & ~3u;   // 4-byte aligned rows
-      uint8_t rowbuf[2 * COVER_SRC_W * 2];
-      __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
-      memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
-      ok = true;
-      for (unsigned sy = 0; sy < (unsigned)height; sy += 2) {
-        unsigned nrows = (sy + 1 < (unsigned)height) ? 2 : 1;
-        if (FR_OK != f_read(&fd, rowbuf, rowbytes * nrows, &rd) || rd != rowbytes * nrows) {
-          ok = false;
-          break;
-        }
-        const uint8_t *r0 = rowbuf, *r1 = &rowbuf[(nrows - 1) * rowbytes];
-        unsigned dy = topdown ? sy / 2 : dh - 1 - sy / 2;
-        for (unsigned dx = 0; dx < dw; dx++) {
-          unsigned x0 = dx * 2, x1 = MIN(x0 + 1, (unsigned)width - 1);
-          rowpix[dx] = block_to_cube(r0, r1, x0, x1, dx, dy);
-        }
-        dma_memcpy16(&pix[dy * COVER_W], rowpix, COVER_W / 2);
-      }
+      dma_memset16(slot->pix, dup8(CUBE_PAL_BASE), COVER_W * COVER_H / 2);
+      if (bpp == 8 && compr == 0)
+        ok = load_bmp8(&fd, hdr, width, height, topdown, slot);
+      else if (bpp == 16 && FR_OK == f_lseek(&fd, rd32(&hdr[10])))
+        ok = load_bmp16(&fd, width, height, topdown, slot);
     }
   }
 
@@ -222,7 +313,7 @@ static int load_pix(uint32_t gc) {
 
   io_used = true;
   cache->pix[victim].gcode = 0;
-  if (!gcode_is_alnum(gc) || !load_cover_file(gc, cache->pix[victim].pix)) {
+  if (!gcode_is_alnum(gc) || !load_cover_file(gc, &cache->pix[victim])) {
     cache->missing[miss_next++ % MISS_SLOTS] = gc;
     return -1;
   }
@@ -360,9 +451,9 @@ void coverart_draw(volatile uint8_t *frame) {
     return;
   // Re-assert our palette every frame: the logo (info tab) shares the
   // MEM_PALETTE[20..235] range and may have overwritten the cube.
-  dma_memcpy16(&MEM_PALETTE[CUBE_PAL_BASE], cube_pal, CUBE_NCOLORS);
-  const uint8_t *pix = cache->pix[sel_slot].pix;
+  const t_pix_ent *slot = &cache->pix[sel_slot];
+  dma_memcpy16(&MEM_PALETTE[CUBE_PAL_BASE], slot->ownpal ? slot->pal : cube_pal, CUBE_NCOLORS);
   for (unsigned r = 0; r < COVER_H; r++)
     dma_memcpy16(&frame[(COVER_PANE_Y + r) * 240 + COVER_PANE_X],
-                 &pix[r * COVER_W], COVER_W / 2);
+                 &slot->pix[r * COVER_W], COVER_W / 2);
 }

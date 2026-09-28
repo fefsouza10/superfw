@@ -49,9 +49,9 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 
 | # | Funcionalidade                       | Estado       | Prioridade |
 |---|--------------------------------------|--------------|------------|
-| A | Capas (cover-art) no navegador (PR #69 upstream) | 2ª rodada de teste (capa em 60x40) | 1 (principal) |
-| B | Navegação: pular por letra + favoritos | 2ª rodada de teste (R+↑/↓, Start favorita) | 2 |
-| C | Modo suspender (sleep) no in-game menu | Funcionou no GBA SP (28/09); falta o teste longo | 3 |
+| A | Capas (cover-art) no navegador (PR #69 upstream) | Cache validado; capas 76x50 em alta qualidade p/ teste | 1 (principal) |
+| B | Navegação: pular por letra + favoritos | Validado no GBA SP (28/09) | 2 |
+| C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR) | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
@@ -225,6 +225,31 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-28 — Capas maiores (76x50) e em alta qualidade
+- Resultado do teste da a504000: tudo OK. Sleep de mais de 10 min com jogo da NOR
+  e do SD, com savestates, funcionou. Pedidos: capas mais bonitas e 25% maiores.
+- **Tamanho:** 76x50 (antes 60x40). O painel foi para (160,90). A largura é par
+  porque o framebuffer é escrito 16 bits por vez.
+- **Formato de alta qualidade:** a firmware passa a aceitar BMP de **8 bits com
+  paleta própria** (até 216 cores, até 76x50) no mesmo caminho `/IMGS/X/Y/CODE.bmp`.
+  - A imagem é copiada como está, sem dithering no console, e usa a própria paleta
+    nos índices 20..235.
+  - O arquivo tem ~4,7 KB contra 19 KB do BMP de 16 bits e não precisa de
+    conversão, então carrega mais rápido.
+  - O BMP de 16 bits do EZ-Flash Omega continua funcionando, agora reduzido para
+    76x50 (média 2x2 em posições proporcionais, lendo as linhas em fluxo) com o
+    cubo fixo.
+- **Conversor** `tools/covers/convert_covers.py` (Python + Pillow): redimensiona com
+  Lanczos, gera uma paleta ótima de 216 cores de 15 bits (median cut) e aplica
+  Floyd–Steinberg. Aceita três fontes:
+  - a pasta IMGS do EZ-Flash (lê o BMP de 16 bits no formato nativo do GBA);
+  - uma pasta de imagens `CODE.png`;
+  - download direto do libretro-thumbnails (títulos ou `--boxart`), usando os
+    códigos do DAT No-Intro do libretro-database.
+- Cache: cada entrada guarda também a paleta. Agora são 40 capas, e o
+  `t_sdram_state` ocupa 15.176.044 B (28 KB de folga).
+- EWRAM `chis`: 90,7% (233.036 B).
 
 ### 2026-09-28 — Capas instantâneas (cache + pré-carregamento)
 - Medido no emulador: converter uma capa gastava ~5M ciclos (~0,3 s). O motivo eram
@@ -419,6 +444,9 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   precisa ser enxuto.
 - Espaço do firmware principal (`chis`): EWRAM ~90% usada após as otimizações de 28/09. Vale
   medir a cada funcionalidade (`--print-memory-usage` no log do make).
+- Capas de alta qualidade: `python3 tools/covers/convert_covers.py --imgs <pasta IMGS> --out saida`
+  ou `--libretro "Nintendo - Game Boy Advance.dat"` (baixa os títulos do
+  libretro-thumbnails). Copie `saida/IMGS` para a raiz do SD.
 - Capas: o pacote oficial do EZ-Flash Omega (`https://www.ezflash.cn/zip/IMGS.zip`,
   citado no README de mikermak/retroid-super-flash) usa BMP de 16 bits no formato
   nativo do GBA. Capas feitas pela comunidade (EZ Omega Thumbmaker, guias) costumam

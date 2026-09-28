@@ -415,7 +415,7 @@ typedef struct {
   t_rentry rentries[RECENT_MAXFN_CNT];
   t_rentry favorites[RECENT_MAXFN_CNT];
   t_reg_entry_max nordata;
-  uint8_t coverpix[COVER_BUF_SIZE] __attribute__((aligned(4)));
+  uint8_t covercache[COVER_CACHE_SIZE] __attribute__((aligned(4)));
 } t_sdram_state;
 
 _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't exceed 14.5MB");
@@ -1384,6 +1384,11 @@ static void draw_central_text_wrapped(const char *t, volatile uint8_t *frame, un
   }
 }
 
+static bool is_gba_fname(const char *fn) {
+  unsigned sl = strlen(fn);
+  return sl >= 4 && !strcasecmp(&fn[sl - 4], ".gba");
+}
+
 static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_rlist *st) {
   // Load the cover for the highlighted ROM (cheap unless the selection moved).
   bool cover_on = false;
@@ -1399,17 +1404,14 @@ static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_
         if (!strcmp(sel->fpath, sdr_state->nordata.games[i].game_name))
           fe = &sdr_state->nordata.games[i];
       if (fe)
-        coverart_update_gcode(sel->fpath, (const uint8_t*)&fe->gamecode);
+        coverart_update_gcode((const uint8_t*)&fe->gamecode);
       else
-        coverart_update("", 0, false);
+        coverart_update(sel->fpath, 0, false);
     }
     else
     #endif
     {
-      const char *selfn = &sel->fpath[sel->fname_offset];
-      unsigned sl = strlen(selfn);
-      bool is_gba = (sl >= 4 && !strcasecmp(&selfn[sl - 4], ".gba"));
-      coverart_update(sel->fpath, 0, is_gba);
+      coverart_update(sel->fpath, 0, is_gba_fname(&sel->fpath[sel->fname_offset]));
     }
     cover_on = coverart_available();
   }
@@ -1470,7 +1472,19 @@ void render_flashbrowser(volatile uint8_t *frame) {
     // Flash games store their game code, so the cover loads without a file read.
     if (show_covers) {
       t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
-      coverart_update_gcode(&sel->game_name[sel->bnoffset], (const uint8_t*)&sel->gamecode);
+      coverart_update_gcode((const uint8_t*)&sel->gamecode);
+      if (coverart_prefetch_ready()) {
+        // Prefetch the covers around the selection, nearest first.
+        bool busy = false;
+        for (int d = 1; d < NORGAMES_ROWS && !busy; d++)
+          for (int n = -d; n <= d && !busy; n += 2 * d) {
+            int i = smenu.fbrowser.selector + n;
+            if (i >= 0 && i < smenu.fbrowser.maxentries)
+              busy = coverart_prefetch_gcode((const uint8_t*)&sdr_state->nordata.games[i].gamecode);
+          }
+        if (!busy)
+          coverart_prefetch_finished();
+      }
       cover_on = coverart_available();
     }
 
@@ -1535,14 +1549,27 @@ void render_browser(volatile uint8_t *frame) {
     t_centry *sel = sdr_state->fileorder[smenu.browser.selector];
     if (!show_covers)
       coverart_invalidate();
-    else if (sel->attr & AM_DIR)
-      coverart_update("", 0, false);
     else {
       char fpath[512];
       npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, sel->fname);
-      unsigned sl = strlen(sel->fname);
-      bool is_gba = (sl >= 4 && !strcasecmp(&sel->fname[sl - 4], ".gba"));
-      coverart_update(fpath, sel->filesize, is_gba);
+      coverart_update(fpath, sel->filesize, !(sel->attr & AM_DIR) && is_gba_fname(sel->fname));
+      if (coverart_prefetch_ready()) {
+        // Prefetch the covers around the selection, nearest first.
+        bool busy = false;
+        for (int d = 1; d < BROWSER_ROWS && !busy; d++)
+          for (int n = -d; n <= d && !busy; n += 2 * d) {
+            int i = smenu.browser.selector + n;
+            if (i < 0 || i >= smenu.browser.dispentries)
+              continue;
+            const t_centry *e = sdr_state->fileorder[i];
+            if (!(e->attr & AM_DIR) && is_gba_fname(e->fname)) {
+              npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, e->fname);
+              busy = coverart_prefetch(fpath, e->filesize);
+            }
+          }
+        if (!busy)
+          coverart_prefetch_finished();
+      }
     }
     cover_on = coverart_available();
 
@@ -2309,7 +2336,7 @@ void menu_init(int sram_testres) {
 
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
-  coverart_init(sdr_state->coverpix);
+  coverart_init(sdr_state->covercache);
 
   reload_theme(menu_theme);
 
@@ -3577,7 +3604,9 @@ static bool lr_combo = false;    // Another key was pressed while L/R were held
 // Handle button input. Supports key re-press whenever a button is held for a while.
 // This key repeat pattern can be tuned for speed and what not.
 uint16_t get_keypress() {
-  uint32_t ckeys = curr_pressed_keys();
+  extern volatile uint16_t latched_keys;
+  uint32_t ckeys = curr_pressed_keys() | latched_keys;
+  latched_keys = 0;
   uint32_t mkeys = 0;
   for (unsigned i = 0; i < 10; i++) {
     if (ckeys & (1 << i)) {

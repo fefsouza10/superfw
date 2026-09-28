@@ -12,6 +12,7 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
+#include <mgba/core/timing.h>
 #include <mgba/gba/core.h>
 #include <mgba/internal/arm/arm.h>
 #include <mgba/internal/gba/gba.h>
@@ -78,6 +79,11 @@ static bool cart_write(uint32_t addr, uint32_t val, unsigned size) {
   if (addr < 0x08000000 || addr >= 0x0A000000)
     return false;
   uint32_t off = addr & (SDRAM_SIZE - 1);
+  if (off == 0x1F00010) {
+    // Debug marker: prints the value and the current cycle count.
+    printf("MARK %u cycles=%u\n", val, (unsigned)mTimingCurrentTime(&gba->timing));
+    return true;
+  }
   if (off >= 0x1F00000 && off < 0x1F00010) {
     dregs[(off >> 2) & 3] = val;
     if ((off & 0xF) == 0)
@@ -259,6 +265,27 @@ int main(int argc, char **argv) {
         core->step(core);
       }
       core->setKeys(core, 0);
+    } else if (!strcmp(cmd, "profile")) {
+      // Hold keys and sample every executed PC for N frames; prints hot spots.
+      static uint32_t hist[1 << 16];
+      memset(hist, 0, sizeof(hist));
+      core->setKeys(core, parse_keys(a1));
+      uint32_t f0 = core->frameCounter(core);
+      while (core->frameCounter(core) - f0 < n) {
+        uint32_t pc = gba->cpu->gprs[15];
+        if ((pc >> 24) == 2)
+          hist[(pc >> 4) & 0xFFFF]++;
+        core->step(core);
+      }
+      core->setKeys(core, 0);
+      for (int k = 0; k < 25; k++) {
+        unsigned best = 0;
+        for (unsigned i = 1; i < (1 << 16); i++)
+          if (hist[i] > hist[best]) best = i;
+        if (!hist[best]) break;
+        printf("HOT %08x %u\n", 0x02000000 | (best << 4) | 0x7c0000 * 0, hist[best]);
+        hist[best] = 0;
+      }
     } else if (!strcmp(cmd, "pc")) {
       printf("pc=%08x lr=%08x cpsr=%08x\n", gba->cpu->gprs[15], gba->cpu->gprs[14], gba->cpu->cpsr.packed);
     }

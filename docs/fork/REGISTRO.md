@@ -226,6 +226,32 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Capas instantâneas (cache + pré-carregamento)
+- Medido no emulador: converter uma capa gastava ~5M ciclos (~0,3 s). O motivo eram
+  3 divisões por pixel, e o Thumb não tem instrução de divisão. Agora a conversão
+  usa uma tabela (`q80`) e soma os 4 pixels do bloco 2x2 de uma vez (canais
+  espalhados num `uint32_t`). O tempo caiu para ~1,2M ciclos (~70 ms), fora a
+  leitura do SD.
+- **Cache na SDRAM** (`sdr_state->covercache`, ~132 KB, `src/coverart.c`):
+  - 48 capas prontas (LRU), indexadas pelo código do jogo.
+  - Um mapa caminho→código do jogo (1024 entradas, hash FNV-1a + tamanho), que
+    evita reler o cabeçalho da ROM.
+  - Uma lista de códigos sem capa.
+  - Voltar a um jogo já visto mostra a capa no mesmo quadro.
+- **Pré-carregamento:** depois de 20 quadros parado, com nenhum botão apertado, o
+  menu carrega as capas dos vizinhos da seleção, a mais próxima primeiro. Faz uma
+  leitura do SD por quadro, no navegador do SD e na aba da NOR. Ao rolar para
+  qualquer jogo da página, a capa aparece na hora.
+- O atraso para carregar a capa de um jogo fora do cache caiu de 15 para 4 quadros
+  depois de soltar os botões.
+- **Botões:** o tratador do VBlank agora guarda os botões apertados em cada quadro
+  (`latched_keys`, `src/main.c`). Um toque curto durante um carregamento não se
+  perde mais (antes, um toque de 2 quadros durante um carregamento sumia).
+- A API mudou: `coverart_init(cache)`, `coverart_update_gcode(gcode)` e
+  `coverart_prefetch*()`.
+- EWRAM: `chis` 90,4% (232.252 B). O `t_sdram_state` ocupa 15.121.868 B, com
+  82 KB de folga até o limite de 14,5 MB.
+
 ### 2026-09-28 — Correções do 1º teste no hardware (build 303ea6f)
 - **Crash na aba de configurações gerais (corrigido).** Reproduzido no emulador
   (`tools/emu/harness.c`, novo). Causa: bug do GCC 13 com `-fipa-ra` no Thumb.

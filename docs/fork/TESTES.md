@@ -20,12 +20,15 @@ Teste anterior: `303ea6f` (28/09). Os resultados estão em `REGISTRO.md`.
    não incomoda no uso.
 2. Nos popups (carregar ROM etc.), L/R continuam trocando de sub-página.
 
-## 3. Capas (60x40)
+## 3. Capas (60x40, com cache)
 1. A capa aparece menor no canto inferior direito. Ela está mais bonita do que antes?
-2. Segurar ↓ para rolar a lista: nada carrega no caminho. A capa só aparece quando
-   você solta o botão e para (~1/4 s).
-3. A capa aparece mais rápido do que antes?
-4. Os nomes longos e o tamanho do arquivo não passam por cima dela.
+2. Segurar ↓ para rolar a lista: nada carrega no caminho.
+3. Pare num jogo por ~1/3 s: o menu carrega em silêncio as capas dos jogos em volta.
+   Depois, ↑/↓ pela página deve mostrar cada capa **na hora**.
+4. Volte a uma pasta ou a um jogo já visitado: a capa aparece na hora.
+5. Dê toques rápidos em ↓ logo depois de parar num jogo: nenhum toque se perde, e a
+   navegação não "engasga".
+6. Os nomes longos e o tamanho do arquivo não passam por cima da capa.
 
 ## 4. Pular por letra (mudou)
 1. No navegador do SD, segure R e aperte ↓: vai para o primeiro jogo da próxima letra.

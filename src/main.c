@@ -121,12 +121,16 @@ void check_pending_saves() {
 }
 
 volatile unsigned frame_count = 0;
+volatile uint16_t latched_keys = 0;
 
 void irq_handler_fn() {
   // Clear all IRQs just in case
   REG_IF = 0xFFFF;
   // Gets called on every V-blank IRQ.
   frame_count++;
+  // Remember keys pressed during the frame, so that short presses are not
+  // lost while the menu is busy (ie. loading a cover).
+  latched_keys |= REG_KEYINPUT ^ 0x3FF;
 }
 
 uint32_t systime() {

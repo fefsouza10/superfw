@@ -30,32 +30,42 @@
 #define COVER_PANE_X     (240 - COVER_W - 4)    // 176
 #define COVER_PANE_Y     (144 - COVER_H - 4)    // 100
 
-// Number of consecutive update calls (one per rendered menu frame) the
-// selection must stay on the same entry, with no key held, before its cover is
-// read from SD (~1/4 s).
-#define COVER_LOAD_DELAY 15
+// Number of consecutive frames the selection must stay on the same entry, with
+// no key held, before its cover is read from SD (cached covers show at once).
+#define COVER_LOAD_DELAY     4
+// Idle frames before the covers of the neighbouring entries are prefetched.
+#define COVER_PREFETCH_DELAY 20
 
-// Size of the image buffer the caller must provide to coverart_init.
-#define COVER_BUF_SIZE   (COVER_W * COVER_H)
+// Size of one cover image and of the cache buffer the caller must provide.
+#define COVER_BUF_SIZE     (COVER_W * COVER_H)
+#define COVER_CACHE_SLOTS  48
+#define COVER_CACHE_SIZE   (1024 * 16 + 64 * 4 + COVER_CACHE_SLOTS * (COVER_BUF_SIZE + 8))
 
-// Sets the (COVER_BUF_SIZE bytes, 4-byte aligned) image buffer and clears the
-// state. Must be called before any other function.
-void coverart_init(uint8_t *pixbuf);
+// Sets the (COVER_CACHE_SIZE bytes, word aligned, cart SDRAM) cache buffer and
+// clears the state. Must be called before any other function.
+void coverart_init(void *cachemem);
 
-// Forget the cached cover (call when the directory listing is rebuilt or the
-// feature is toggled off).
+// Hide the cover (no entry selected, or the feature is off).
 void coverart_invalidate(void);
 
-// Ensure the cover for the currently selected ROM is loaded. Only touches the
-// SD card once the selection has settled on a new entry (COVER_LOAD_DELAY), so
-// it is cheap to call per frame.
-// Pass is_gba=false (or an empty path) to clear the cover for non-ROM entries.
+// Call once per frame with the selected entry. Cached covers show at once;
+// otherwise the SD card is only read once the selection settles on the entry
+// (COVER_LOAD_DELAY idle frames), so it is cheap to call per frame.
+// Pass is_gba=false for entries that have no cover (dirs, other files).
 void coverart_update(const char *rom_fullpath, uint32_t filesize, bool is_gba);
 
 // Like coverart_update but keyed directly by a stored 4-char game code (no ROM
-// header read) -- used for NOR/flash games. `cachekey` is any stable string
-// unique to the entry; the SD card is only touched when it changes.
-void coverart_update_gcode(const char *cachekey, const uint8_t gcode[4]);
+// header read) -- used for NOR/flash games.
+void coverart_update_gcode(const uint8_t gcode[4]);
+
+// Prefetching: after coverart_update*, if coverart_prefetch_ready() the menu
+// offers neighbouring entries (nearest first) to coverart_prefetch*, stopping
+// at the first call that returns true (it read the SD card; one read per
+// frame). If none did, it calls coverart_prefetch_finished().
+bool coverart_prefetch_ready(void);
+bool coverart_prefetch(const char *rom_fullpath, uint32_t filesize);
+bool coverart_prefetch_gcode(const uint8_t gcode[4]);
+void coverart_prefetch_finished(void);
 
 // Whether a cover is currently loaded and should be drawn.
 bool coverart_available(void);

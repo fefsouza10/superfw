@@ -34,7 +34,7 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 
 | # | Funcionalidade                       | Estado       | Prioridade |
 |---|--------------------------------------|--------------|------------|
-| A | Capas (cover-art) no navegador (PR #69 upstream) | Planejado | 1 (principal) |
+| A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Planejado  | 2 |
 | C | Modo suspender (sleep) no in-game menu | Planejado  | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Planejado | 4 |
@@ -200,7 +200,35 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
-### 2026-09-28
+### 2026-09-28 — Capas (funcionalidade A)
+- **Commit `7a210ce`**: o PR davidgfnet/superfw#69 foi portado com cherry-pick, mantendo
+  o autor original (mikermak). Os conflitos em `Makefile` (entrada `src/recent.c` nova
+  no master) e em `render_browser` (o master não mostra tamanho para pastas) foram
+  resolvidos mantendo os dois comportamentos.
+- **Commit seguinte** (melhorias sobre o PR):
+  - Opção "Mostrar capas" na aba UI (`UiSetCover`, `src/menu.c`), gravada como
+    `show_covers=` em `ui-settings.txt` (`src/settings.c`). O padrão é ligada. Texto
+    `MSG_UIS_COVER` em `res/messages.py`, `pt.json` e `es.json`; os outros idiomas
+    caem no inglês. As linhas da aba UI passaram de 20 para 18 px para caber a nova
+    opção acima do botão Salvar.
+  - A capa só é lida do SD depois que a seleção fica parada por `COVER_LOAD_DELAY` = 6
+    frames do menu (`needs_load()`, `src/coverart.c`). Ao voltar para a entrada que já
+    estava carregada, a capa reaparece sem nova leitura.
+  - Dithering ordenado Bayer 4x4 na conversão para o cubo de 216 cores
+    (`dither6()`, `src/coverart.c`).
+  - Na aba Recentes, os jogos da NOR agora mostram a capa, buscando o código do jogo
+    em `nordata`. No PR original eles ficavam sem capa, porque o caminho não existe no SD.
+  - `coverart_invalidate()` passou a ser chamado em `menu_init()`, porque os buffers
+    ficam em `.sbss` (EWRAM não zerada no boot).
+- Verificação: os builds `sd`, `lite` e `chis` compilam sem warnings novos. Um teste
+  no host (stubs de FatFS, fora do repositório) validou a leitura de BMP bottom-up
+  e top-down, o letterbox, o debounce, a volta sem releitura e o dithering (média do
+  canal 2,38 contra o ideal de 2,42).
+- **Falta**: testar no GBA SP com o pacote `/IMGS` do EZ-Flash Omega.
+- Atenção: a EWRAM do firmware `chis` está em ~96% (246.864 de 251 KB). As próximas
+  funcionalidades devem guardar dados grandes no `sdr_state` (SDRAM) e não em `.sbss`.
+
+### 2026-09-28 — Planejamento
 - Criado este documento com o plano das funcionalidades A–D.
 - Verificado que o build `BOARD=chis` compila no container (gcc-arm-none-eabi 13.2).
 - Analisado o PR upstream davidgfnet/superfw#69 (cover-art). Ele conflita com o
@@ -217,5 +245,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 - A NOR é tratada como 128 MiB, em blocos de 4 MiB (`src/flash_mgr.h`).
 - Espaço do IGM: ~48,6 KB de 60 KB em EWRAM e 4 KB de IWRAM. Todo código novo no IGM
   precisa ser enxuto.
+- Espaço do firmware principal (`chis`): EWRAM ~96% usada após as capas. Vale
+  medir a cada funcionalidade (`--print-memory-usage` no log do make).
 - Nos navegadores, L/R trocam de aba, Select abre o gerenciador de arquivos,
   ←/→ pulam uma página e Start está livre.

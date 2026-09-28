@@ -214,6 +214,7 @@
     "MSG_NOR_CLOK": "Flash Deletado!",
     "MSG_TOOLS5_FCLR": "Apagar flash",
     "MSG_UIS_BHID": "Mostrar ocultos",
+    "MSG_UIS_COVER": "Mostrar capas",
     "MSG_UIS_SPD0": "Muito lento",
     "MSG_UIS_SPD1": "Lento",
     "MSG_UIS_SPD2": "Normal",

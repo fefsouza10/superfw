@@ -26,12 +26,17 @@
 #define COVER_PANE_X     (240 - COVER_W - 2)    // 118
 #define COVER_PANE_Y     (144 - COVER_H - 2)    // 62
 
+// Number of consecutive update calls (one per rendered menu frame) the
+// selection must stay on the same entry before its cover is read from SD.
+#define COVER_LOAD_DELAY 6
+
 // Forget the cached cover (call when the directory listing is rebuilt or the
 // feature is toggled off).
 void coverart_invalidate(void);
 
 // Ensure the cover for the currently selected ROM is loaded. Only touches the
-// SD card when the selection actually changed, so it is cheap to call per frame.
+// SD card once the selection has settled on a new entry (COVER_LOAD_DELAY), so
+// it is cheap to call per frame.
 // Pass is_gba=false (or an empty path) to clear the cover for non-ROM entries.
 void coverart_update(const char *rom_fullpath, uint32_t filesize, bool is_gba);
 

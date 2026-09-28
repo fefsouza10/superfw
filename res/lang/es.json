@@ -214,6 +214,7 @@
     "MSG_NOR_CLOK": "¡Flash borrada correctamente!",
     "MSG_TOOLS5_FCLR": "Borrar memoria flash",
     "MSG_UIS_BHID": "Ver ocultos",
+    "MSG_UIS_COVER": "Ver portadas",
     "MSG_UIS_SPD0": "Muy lento",
     "MSG_UIS_SPD1": "Lento",
     "MSG_UIS_SPD2": "Normal",

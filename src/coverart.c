@@ -24,6 +24,9 @@ static EWRAM_BSS char cover_key[512];     // ROM path the current state belongs 
 static bool     cover_have;               // a valid cover is loaded (.bss/IWRAM -> zeroed)
 static uint16_t cube_pal[CUBE_NCOLORS];   // the fixed color cube (GBA BGR555)
 static bool     cube_built;
+// Selection that was requested but not loaded yet (see COVER_LOAD_DELAY).
+static EWRAM_BSS char pending_key[512];
+static unsigned pending_cnt;
 
 // Build the 6x6x6 cube once. Each channel uses 6 evenly spread 5-bit levels.
 static void build_cube(void) {
@@ -35,12 +38,30 @@ static void build_cube(void) {
   cube_built = true;
 }
 
-// Map a BMP 16-bit pixel to its nearest cube index (already biased by base).
+// 4x4 ordered-dither (Bayer) thresholds, 0..15.
+static const uint8_t bayer4[4][4] = {
+  {  0,  8,  2, 10 },
+  { 12,  4, 14,  6 },
+  {  3, 11,  1,  9 },
+  { 15,  7, 13,  5 },
+};
+
+// Quantize a 5-bit channel to one of the 6 cube levels, dithered by `t` (0..15).
+// c * 80 / 31 maps 0..31 to 0..80 (5 steps of 16), the threshold adds the
+// fractional part so neighbouring pixels alternate between adjacent levels.
+static inline unsigned dither6(unsigned c, unsigned t) {
+  unsigned q = (c * 80 / 31 + t) >> 4;
+  return q > 5 ? 5 : q;
+}
+
+// Map a BMP 16-bit pixel to a cube index (already biased by base), dithered by
+// its screen position.
 // The EZ-Flash-Omega pack stores pixels GBA-native (X1B5G5R5): red is the LOW
 // 5 bits, blue the high 5 bits (not the standard X1R5G5B5 BMP layout).
-static inline uint8_t rgb555_to_cube(unsigned v) {
+static inline uint8_t rgb555_to_cube(unsigned v, unsigned x, unsigned y) {
   unsigned r = v & 0x1F, g = (v >> 5) & 0x1F, b = (v >> 10) & 0x1F;
-  return CUBE_PAL_BASE + (((r * 6) >> 5) * 36 + ((g * 6) >> 5) * 6 + ((b * 6) >> 5));
+  unsigned t = bayer4[y & 3][x & 3];
+  return CUBE_PAL_BASE + dither6(r, t) * 36 + dither6(g, t) * 6 + dither6(b, t);
 }
 
 static bool gcode_is_alnum(const uint8_t *c) {
@@ -96,7 +117,7 @@ static bool load_cover_file(const uint8_t gcode[4]) {
         unsigned dy = topdown ? (unsigned)sy : (unsigned)(height - 1 - sy);
         uint8_t *dst = &cover_pix[dy * COVER_W];
         for (int x = 0; x < width; x++)
-          dst[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8));
+          dst[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8), x, dy);
       }
 
       if (ok)
@@ -110,12 +131,27 @@ static bool load_cover_file(const uint8_t gcode[4]) {
 
 void coverart_invalidate(void) {
   cover_key[0] = 0;
+  pending_key[0] = 0;
   cover_have = false;
 }
 
+// Tracks the current selection and decides when its cover must be read.
+// Returns true once `key` has been requested for COVER_LOAD_DELAY consecutive
+// calls and is not the cover already loaded, so scrolling through a list does
+// not hit the SD card for every entry it passes.
+static bool needs_load(const char *key) {
+  if (strncmp(pending_key, key, sizeof(pending_key) - 1)) {
+    strncpy(pending_key, key, sizeof(pending_key) - 1);
+    pending_key[sizeof(pending_key) - 1] = 0;
+    pending_cnt = 0;
+  }
+  if (0 == strncmp(cover_key, key, sizeof(cover_key) - 1))
+    return false;
+  return ++pending_cnt >= COVER_LOAD_DELAY;
+}
+
 void coverart_update(const char *rom_fullpath, uint32_t filesize, bool is_gba) {
-  // No-op while the selection hasn't moved (avoids re-reading the SD card).
-  if (0 == strncmp(cover_key, rom_fullpath, sizeof(cover_key) - 1))
+  if (!needs_load(rom_fullpath))
     return;
 
   strncpy(cover_key, rom_fullpath, sizeof(cover_key) - 1);
@@ -134,7 +170,7 @@ void coverart_update(const char *rom_fullpath, uint32_t filesize, bool is_gba) {
 }
 
 void coverart_update_gcode(const char *cachekey, const uint8_t gcode[4]) {
-  if (0 == strncmp(cover_key, cachekey, sizeof(cover_key) - 1))
+  if (!needs_load(cachekey))
     return;
 
   strncpy(cover_key, cachekey, sizeof(cover_key) - 1);
@@ -146,11 +182,12 @@ void coverart_update_gcode(const char *cachekey, const uint8_t gcode[4]) {
 }
 
 bool coverart_available(void) {
-  return cover_have;
+  // Only show the loaded cover while its entry is still the selected one.
+  return cover_have && !strncmp(cover_key, pending_key, sizeof(cover_key) - 1);
 }
 
 void coverart_draw(volatile uint8_t *frame) {
-  if (!cover_have)
+  if (!coverart_available())
     return;
   // Re-assert our palette every frame: the logo (info tab) shares the
   // MEM_PALETTE[20..235] range and may have overwritten the cube.

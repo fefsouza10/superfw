@@ -104,8 +104,9 @@ enum {
   UiSetRect  = 2,
   UiSetASpd  = 3,
   UiSetHid   = 4,
-  UiSetSave  = 5,
-  UiSetMAX   = 5,
+  UiSetCover = 5,
+  UiSetSave  = 6,
+  UiSetMAX   = 6,
 };
 
 enum {
@@ -1328,14 +1329,30 @@ static void draw_central_text_wrapped(const char *t, volatile uint8_t *frame, un
 void render_recent(volatile uint8_t *frame) {
   // Load the cover for the highlighted ROM (cheap unless the selection moved).
   bool cover_on = false;
-  if (!smenu.recent.maxentries)
+  if (!smenu.recent.maxentries || !show_covers)
     coverart_invalidate();
   else {
     t_rentry *sel = &sdr_state->rentries[smenu.recent.selector];
-    const char *selfn = &sel->fpath[sel->fname_offset];
-    unsigned sl = strlen(selfn);
-    bool is_gba = (sl >= 4 && !strcasecmp(&selfn[sl - 4], ".gba"));
-    coverart_update(sel->fpath, 0, is_gba);
+    #ifdef SUPPORT_NORGAMES
+    if (sel->flags & FLAG_RECENT_NOR) {
+      // NOR entries are not SD paths, use the stored game code instead.
+      const t_flash_game_entry *fe = NULL;
+      for (unsigned i = 0; i < sdr_state->nordata.gamecnt && !fe; i++)
+        if (!strcmp(sel->fpath, sdr_state->nordata.games[i].game_name))
+          fe = &sdr_state->nordata.games[i];
+      if (fe)
+        coverart_update_gcode(sel->fpath, (const uint8_t*)&fe->gamecode);
+      else
+        coverart_update("", 0, false);
+    }
+    else
+    #endif
+    {
+      const char *selfn = &sel->fpath[sel->fname_offset];
+      unsigned sl = strlen(selfn);
+      bool is_gba = (sl >= 4 && !strcasecmp(&selfn[sl - 4], ".gba"));
+      coverart_update(sel->fpath, 0, is_gba);
+    }
     cover_on = coverart_available();
   }
 
@@ -1385,9 +1402,11 @@ void render_flashbrowser(volatile uint8_t *frame) {
   }
   else {
     // Flash games store their game code, so the cover loads without a file read.
-    t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
-    coverart_update_gcode(&sel->game_name[sel->bnoffset], (const uint8_t*)&sel->gamecode);
-    cover_on = coverart_available();
+    if (show_covers) {
+      t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
+      coverart_update_gcode(&sel->game_name[sel->bnoffset], (const uint8_t*)&sel->gamecode);
+      cover_on = coverart_available();
+    }
 
     for (unsigned i = 0; i < NORGAMES_ROWS; i++) {
       if (smenu.fbrowser.seloff + i >= smenu.fbrowser.maxentries)
@@ -1448,7 +1467,9 @@ void render_browser(volatile uint8_t *frame) {
   else {
     // Load the cover/title-screen for the highlighted ROM.
     t_centry *sel = sdr_state->fileorder[smenu.browser.selector];
-    if (sel->attr & AM_DIR)
+    if (!show_covers)
+      coverart_invalidate();
+    else if (sel->attr & AM_DIR)
       coverart_update("", 0, false);
     else {
       char fpath[512];
@@ -2004,28 +2025,32 @@ void render_settings(volatile uint8_t *frame) {
 
 void render_ui_settings(volatile uint8_t *frame) {
   const unsigned colx = 170;
+  const unsigned rowh = 18;
   char tmpbuf[64];
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %u >", menu_theme + 1U);
   draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, 22, 224);
   draw_central_text(tmpbuf, frame, colx, 22 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_LANG_NAME]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 22 + 20, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 20 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 22 + rowh*1, 224);
+  draw_central_text(tmpbuf, frame, colx, 22 + rowh*1 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 22 + 40, 224);
-  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + 40 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 22 + rowh*2, 224);
+  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + rowh*2 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_UIS_SPD0 + anim_speed]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 22 + 60, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 60 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 22 + rowh*3, 224);
+  draw_central_text(tmpbuf, frame, colx, 22 + rowh*3 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + 80, 224);
-  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + 80 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + rowh*4, 224);
+  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + rowh*4 );
+
+  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, 22 + rowh*5, 224);
+  draw_central_text(msgs[lang_id][show_covers ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + rowh*5 );
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, 22 + smenu.uiset.selector * 20, 63);
+      render_icon_trans(i, 22 + smenu.uiset.selector * rowh, 63);
 
   draw_button_box(frame, 20, 220, 132, 152, smenu.uiset.selector == UiSetSave);
   draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 134);
@@ -2210,6 +2235,7 @@ void menu_init(int sram_testres) {
 
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
+  coverart_invalidate();   // Its state lives in (uninitialized) EWRAM .sbss
 
   reload_theme(menu_theme);
 
@@ -3155,6 +3181,8 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       anim_speed = anim_speed ? anim_speed - 1 : 0;
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      show_covers ^= 1;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
     else if (smenu.uiset.selector == UiSetLang)
@@ -3167,6 +3195,8 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       anim_speed = MIN(animspd_cnt - 1, anim_speed + 1);
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      show_covers ^= 1;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
     else if (smenu.uiset.selector == UiSetLang)

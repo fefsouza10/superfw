@@ -132,6 +132,7 @@
     "IMENU_MAIN3_SSTATE": "Savestates",
     "IMENU_MAIN4_RTC": "Relógio RTC",
     "IMENU_MAIN5_CHEATS": "Cheats",
+    "IMENU_MAIN6_SLEEP": "Suspender (L+R+Sel)",
     "IMENU_GOBACK": "Voltar",
     "IMENU_UPDAT_RTC": "Atualizar relógio RTC",
     "IMENU_RST0_GAME": "Reiniciar jogo",

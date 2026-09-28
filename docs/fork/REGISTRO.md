@@ -36,7 +36,7 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 |---|--------------------------------------|--------------|------------|
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Pronto p/ teste no hardware | 2 |
-| C | Modo suspender (sleep) no in-game menu | Planejado  | 3 |
+| C | Modo suspender (sleep) no in-game menu | Protótipo p/ teste no hardware | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Planejado | 4 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
@@ -200,6 +200,27 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Sleep no in-game menu (funcionalidade C, protótipo)
+- Item novo "Suspender (L+R+Sel)" no fim do menu principal do IGM
+  (`action_sleep()`, `src/ingame_menu.c`). As linhas do menu passaram de 19 para
+  17 px para caber o 7º item.
+- O que ele faz: espera todos os botões serem soltos, liga o forced blank e deixa só
+  a IRQ do teclado ligada (`REG_IE = 0x1000`, `KEYCNT = 0xC304`, que dispara quando
+  L+R+Select estão pressionados juntos). Então chama o BIOS Stop (`swi 0x03`). Ao
+  acordar, restaura IE/KEYCNT/DISPCNT, espera soltar os botões e volta direto ao jogo.
+- O som não é mexido: o IGM já zera o `SOUNDCNT_L` ao entrar. Zerar o `SOUNDCNT_X`
+  apagaria os registradores de PSG do jogo.
+- Texto `IMENU_MAIN6_SLEEP` em en/pt/es.
+- IGM: 48.960 de 60 KB de EWRAM.
+- **Pontos a validar no GBA SP** (o protótipo existe para isso):
+  1. Se a tela e a luz apagam e se L+R+Select acorda o console.
+  2. **Se um jogo carregado do SD (na SDRAM) continua funcionando depois de acordar**,
+     de preferência após alguns minutos dormindo. Se travar ou corromper, o CPLD não
+     faz o refresh da SDRAM sem o clock, e vale partir para o plano B ("sono leve"
+     com Halt).
+  3. O mesmo teste com um jogo rodando da NOR, que não depende da SDRAM.
+  4. Se o save em SRAM continua íntegro.
+
 ### 2026-09-28 — Navegação (funcionalidade B)
 - **Pular por letra:** no navegador do SD e no da NOR, o **Start** leva à primeira
   entrada com uma inicial diferente da atual, voltando ao topo no fim da lista
@@ -273,7 +294,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   No SuperChis, o banco de SRAM usa o bit 3 (`sram_superchis_bank`) e o mapa de
   blocos da NOR usa `0x100 | bloco` (`set_superchis_normap`).
 - A NOR é tratada como 128 MiB, em blocos de 4 MiB (`src/flash_mgr.h`).
-- Espaço do IGM: ~48,6 KB de 60 KB em EWRAM e 4 KB de IWRAM. Todo código novo no IGM
+- Espaço do IGM: ~49 KB de 60 KB em EWRAM e 4 KB de IWRAM. Todo código novo no IGM
   precisa ser enxuto.
 - Espaço do firmware principal (`chis`): EWRAM ~96% usada após as capas. Vale
   medir a cada funcionalidade (`--print-memory-usage` no log do make).

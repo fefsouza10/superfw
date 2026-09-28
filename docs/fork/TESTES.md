@@ -1,8 +1,9 @@
 # Roteiro de testes no GBA SP (SuperChis Prime)
 
-Firmware: `superfw-chis-ecfcfde.fw` (branch `claude/project-thread-3djlx9`, commit `ecfcfde`).
-Inclui tudo da `91feaa5` (tamanho das capas, /COVERS + /IMGS, toques de botão),
-que ainda não voltou testada, e os patches IPS/UPS/BPS.
+Firmware: `superfw-chis-3029df1.fw` (branch `claude/project-thread-3djlx9`, commit `3029df1`).
+Inclui tudo da `ecfcfde` (capas, /COVERS + /IMGS, toques de botão, patches
+IPS/UPS/BPS), que ainda não voltou testada, mais a busca por nome, o player de
+vídeo, a economia de bateria no menu e as opções de suspensão (itens 5 a 9).
 
 ## Antes de começar
 - Faça backup da pasta `/.superfw` e dos seus `.sav` do SD.
@@ -42,3 +43,39 @@ que ainda não voltou testada, e os patches IPS/UPS/BPS.
    ponha `Jogo.ips` (ou `.ups`/`.bps`) ao lado de `Jogo.gba`, com o mesmo nome.
    Confira que o save e o in-game menu funcionam, e anote quanto tempo o
    carregamento levou a mais.
+
+## 5. Busca por nome
+1. Numa pasta com muitos jogos, aperte R+Start: abre o teclado.
+2. Digite algumas letras com A (por exemplo "POK"). O primeiro arquivo que contém
+   o texto aparece; L/R passam para o anterior e o próximo.
+3. Start leva a seleção até ele; B fecha sem mudar a seleção.
+
+## 6. Player de vídeo
+1. No PC, instale o Python 3 e rode `pip install numpy pillow imageio-ffmpeg`.
+2. Converta um episódio: `python3 gbvconv.py episodio.mkv` (gera
+   `episodio.gbv`, até 31 MB). Anote quanto tempo levou.
+3. Copie o `.gbv` para o SD e abra pela SuperFW. Confira que imagem e som estão
+   sincronizados do começo ao fim, sem travadas.
+4. Botões: A/Start pausa; ←/→ ±10 s; L/R ±60 s; ↑/↓ volume; Select fixa a barra;
+   B pausa e B de novo volta à SuperFW.
+5. Diga se a qualidade da imagem ficou aceitável e em quais cenas ficou pior.
+
+## 7. Suspender com outra combinação
+1. Configurações gerais → "Acordar com": escolha outra combinação (por exemplo
+   L+R+A) e salve.
+2. Entre num jogo, abra o in-game menu: o item deve mostrar "Suspender (L+R+A)".
+3. Suspenda, espere uns minutos e acorde com a combinação nova. L+R+Select não
+   deve mais acordar.
+
+## 8. Suspensão automática no menu
+1. Configurações gerais → "Suspender no menu": 2 min. Salve.
+2. Deixe o GBA parado no navegador: depois de 2 minutos a tela apaga.
+3. Acorde com a combinação escolhida: o menu volta como estava, sem ter recebido
+   os botões da combinação (não troca de aba, não abre nada).
+4. Com "Nunca", a tela não deve apagar.
+
+## 9. Tecla do in-game menu e bateria
+1. Troque a "Tecla do menu" para outra combinação, salve e reinicie o GBA. A
+   escolha agora continua (antes voltava para L+R+Start).
+2. Se puder comparar, anote quanto a pilha dura parada no menu em relação ao build
+   anterior (o menu agora deixa a CPU parada entre os quadros).

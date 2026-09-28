@@ -535,7 +535,7 @@ NOINLINE
 unsigned load_extemu_rom(const char *fn, uint32_t fs, const t_emu_loader *ldinfo, progress_fn progress) {
   FIL fd;
   uint8_t *ptr = (uint8_t*)(GBA_ROM_ADDR);
-  if (fs > 8*1024*1024)
+  if (fs > (ldinfo->maxsize ? ldinfo->maxsize : 8*1024*1024))
     return ERR_LOAD_BADROM;
 
   // Try to find a valid and existing emulator.

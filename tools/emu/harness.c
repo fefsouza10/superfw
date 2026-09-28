@@ -9,6 +9,7 @@
 // Usage: harness <superfw.gba> <sd.img> <script> <outdir>
 // Script lines: "wait N", "press KEYS N" (KEYS like A, B, SEL, START, R+D),
 //               "dump NAME BYTES" (first BYTES of SDRAM to NAME.bin),
+//               "peek ADDR" (prints a 32-bit word),
 //               "shot NAME" (writes NAME.ppm), "pc" (prints the CPU PC).
 
 #include <mgba/core/core.h>
@@ -287,6 +288,10 @@ int main(int argc, char **argv) {
         printf("HOT %08x %u\n", 0x02000000 | (best << 4) | 0x7c0000 * 0, hist[best]);
         hist[best] = 0;
       }
+    } else if (!strcmp(cmd, "peek")) {
+      // Prints the 32-bit word at a GBA address (hex)
+      uint32_t a = strtoul(a1, NULL, 16);
+      printf("peek %08x = %08x\n", a, core->busRead32(core, a));
     } else if (!strcmp(cmd, "dump")) {
       // Dumps the first N bytes of the cart SDRAM to outdir/<name>.bin
       char fn[512];

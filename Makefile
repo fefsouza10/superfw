@@ -23,6 +23,7 @@ ifeq ($(BOARD),lite)
 else ifeq ($(BOARD),sd)
   GLOBAL_DEFINES += -DSUPERCARD_FLASH_ADDRPERM
   BUNDLE_GBC_EMULATOR = 1
+  BUNDLE_VIDEO_PLAYER = 1
   COMPRESS_FIRMWARE = 1
   MAXFSIZE = 512
   FWFLAVOUR = "SD"
@@ -30,6 +31,7 @@ else ifeq ($(BOARD),chis)
   GLOBAL_DEFINES += -DSUPPORT_NORGAMES -DSUPERCHIS_IO -DFONTS_EXT
   BUNDLE_GBC_EMULATOR = 1
   BUNDLE_OTHER_EMULATORS = 1
+  BUNDLE_VIDEO_PLAYER = 1
   # Can't be over 2MiB (hardlimit)
   MAXFSIZE = 2048
   FWFLAVOUR = "Chis"
@@ -61,6 +63,11 @@ endif
 ifeq ($(BUNDLE_GBC_EMULATOR),1)
   GLOBAL_DEFINES += -DBUNDLE_GBC_EMULATOR
   BIEMUFILES += emu/jagoombacolor_v0.5.gba.comp
+endif
+
+ifeq ($(BUNDLE_VIDEO_PLAYER),1)
+  GLOBAL_DEFINES += -DBUNDLE_VIDEO_PLAYER
+  BIEMUFILES += gbvplayer.gba.comp
 endif
 
 ifeq ($(BUNDLE_OTHER_EMULATORS),1)
@@ -199,6 +206,13 @@ ingamemenu.payload:	$(MENUFILES) src/menu_messages.h
 			-nostartfiles -fno-builtin -Wl,-Map=firmware.ingame.map -Wl,--print-memory-usage
 	$(OBJCOPY) --output-target=binary ingamemenu.elf ingamemenu.payload
 
+gbvplayer.gba.bin:	gbvplayer/player.c gbvplayer/crt0.S gbvplayer/player.ld gbvplayer/font.h
+	# Video player (bundled as an emulator for .gbv files)
+	$(CC) $(BASEFLAGS) -mthumb -mthumb-interwork -O2 -Wall -ffreestanding -nostdlib -fno-builtin \
+		-fno-tree-loop-distribute-patterns -T gbvplayer/player.ld -o gbvplayer.elf \
+		gbvplayer/crt0.S gbvplayer/player.c -lgcc
+	$(OBJCOPY) --output-target=binary gbvplayer.elf gbvplayer.gba.bin
+
 ingame_trampoline.payload:	src/ingame_trampoline.S
 	$(CC) $(BASEFLAGS) -nostartfiles -T ldscripts/gba_ingametramp.ld -o ingame_trampoline.elf src/ingame_trampoline.S
 	$(OBJCOPY) --output-target=binary ingame_trampoline.elf ingame_trampoline.payload
@@ -231,5 +245,5 @@ upkr.elf:	tools/upkr.cc
 	g++ -o $@ $< -O3 -ffast-math
 
 clean:
-	rm -f ldscripts/*.i *.gba *.elf *.payload *.map res/*.comp emu/*.comp *.comp src/menu_messages.h src/messages_data.h
+	rm -f ldscripts/*.i *.gba *.gba.bin *.elf *.payload *.map res/*.comp emu/*.comp *.comp src/menu_messages.h src/messages_data.h
 

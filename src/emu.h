@@ -26,6 +26,7 @@ typedef unsigned(*t_loader_handler)(uint8_t *buffer, const char *fn, unsigned fs
 typedef struct {
   const char *emu_name;                // Emulator (file) name
   const t_loader_handler hndlr;        // Handler function that loads any necessary header.
+  const uint32_t maxsize;              // Max file size (zero means 8MiB)
 } t_emu_loader;
 
 typedef struct {

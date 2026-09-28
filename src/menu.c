@@ -1077,7 +1077,11 @@ void start_emu_game(const t_emu_loader *ldinfo, const char *fn, uint32_t fs) {
   // Load: Sav/Reset Save: Reboot/Disable
   sram_filename_calc(fn, spop.p.load.l.savefn, save_path_default);
   t_sram_load_policy lp = check_file_exists(spop.p.load.l.savefn) ? SaveLoadSav : SaveLoadReset;
-  unsigned errsave = prepare_sram_based_savegame(lp, SaveReboot, spop.p.load.l.savefn);
+  // Videos do not save anything.
+  const char *ext = find_extension(fn);
+  bool isvideo = ext && !strcasecmp(ext, "gbv");
+  unsigned errsave = isvideo ? prepare_sram_based_savegame(SaveLoadDisable, SaveDisable, spop.p.load.l.savefn) :
+                               prepare_sram_based_savegame(lp, SaveReboot, spop.p.load.l.savefn);
   if (errsave) {
     unsigned errmsg = (errsave == ERR_SAVE_BADSAVE)   ? MSG_ERR_SAVERD :
                                                         MSG_ERR_SAVEWR;

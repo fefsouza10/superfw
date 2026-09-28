@@ -151,7 +151,6 @@ static const char *const spext[] = { ".ips", ".ups", ".bps" };
 static uint32_t parse_header(FIL *fd, unsigned type, uint32_t romfs, uint32_t *hdrlen) {
   uint8_t hdr[32];
   UINT rdbytes;
-  uint32_t fsz = f_size(fd);
   if (FR_OK != f_read(fd, hdr, sizeof(hdr), &rdbytes) || rdbytes < 8)
     return 0;
 

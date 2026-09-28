@@ -74,7 +74,7 @@ uint8_t menu_theme = 0;
 uint8_t lang_id = 0;
 uint8_t recent_menu = 1;
 uint8_t hide_hidden = 0;
-uint8_t show_covers = 1;
+uint8_t cover_size = 3;         // 0: off, 1..3: small, medium, large
 uint8_t anim_speed = animspd_cnt / 2;
 
 // Default settings
@@ -124,8 +124,8 @@ bool save_ui_settings() {
     "recent_menu=%u\n"
     "anim_speed=%u\n"
     "hide_hidden=%u\n"
-    "show_covers=%u\n",
-    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, show_covers);
+    "cover_size=%u\n",
+    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, cover_size);
 
   UINT wrbytes;
   FRESULT res = f_write(&fd, buf, strlen(buf), &wrbytes);
@@ -229,6 +229,10 @@ static void parse_ui_settings(void *usr, const char *var, const char *value) {
   if (!strcmp(var, "langcode")) {
     uint16_t code = ((uint8_t)value[0]) | (((uint8_t)value[1]) << 8);
     lang_id = lang_lookup(code);
+  } else if (!strcmp(var, "show_covers")) {
+    // Older builds only had an on/off switch (the size option replaced it).
+    if (!parseuint(value))
+      cover_size = 0;
   } else {
     static const struct {
       const char *s;
@@ -237,7 +241,7 @@ static void parse_ui_settings(void *usr, const char *var, const char *value) {
       { "theme",       &menu_theme },
       { "recent_menu", &recent_menu },
       { "hide_hidden", &hide_hidden },
-      { "show_covers", &show_covers },
+      { "cover_size",  &cover_size },
       { "anim_speed",  &anim_speed },
     };
     unsigned valu = parseuint(value);

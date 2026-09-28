@@ -8,22 +8,23 @@ Teste anterior: `a504000` (28/09), tudo OK. Os resultados estão em `REGISTRO.md
 - Rode primeiro como `.gba`, iniciando pela SuperFW instalada, igual ao teste anterior.
 - Anote o resultado de cada item: OK, falhou (o que aconteceu) ou não testado.
 
-## 1. Capas maiores (76x50) com o pacote atual (16 bits)
-1. Com o seu pacote atual do EZ-Flash, as capas aparecem 25% maiores. A velocidade e
-   o cache continuam como antes.
-2. Os nomes longos e o tamanho do arquivo não passam por cima da capa.
+## 1. Tamanho das capas
+1. Na primeira vez, as capas aparecem grandes (120x80), como no começo.
+2. Aba UI → "Capas": ←/→ alterna entre Desativado, Pequena, Média e Grande. Volte ao
+   navegador e confira cada tamanho. Salve, reinicie e confira que o tamanho
+   continua o escolhido.
+3. Nos três tamanhos, os nomes longos e o tamanho do arquivo não passam por cima da
+   capa.
 
-## 2. Capas de alta qualidade (8 bits)
-1. Faça backup da sua pasta `/IMGS` e troque-a pela do pacote
-   `IMGS-superfw-titulos.zip` (ou pela saída do `convert_covers.py`).
-2. As capas ficam bem mais bonitas, sem o "chuvisco" do dithering.
-3. A velocidade: parar num jogo novo, pré-carregar os vizinhos e voltar a jogos já
-   vistos continuam tão rápidos quanto antes, ou mais.
-4. Passe por várias capas seguidas: não aparecem cores erradas (paleta de uma capa
-   na imagem de outra).
-5. Um jogo sem capa no pacote não mostra painel nenhum.
+## 2. Pastas /COVERS e /IMGS
+1. Deixe o seu pacote antigo do EZ-Flash em `/IMGS` e copie a pasta `COVERS` do zip
+   `COVERS-superfw-titulos.zip` para a raiz do SD.
+2. Jogos que existem no pacote novo mostram a capa limpa (sem "chuvisco").
+3. O Metroid Zero Mission ProjectM volta a mostrar capa: a do pacote novo se o código
+   for BMXE, ou a do `/IMGS` se o hack usar outro código.
+4. A velocidade continua boa no tamanho grande (cache e pré-carregamento).
 
-## 3. Regressão rápida
-1. A aba Info (logo) e voltar ao navegador: as cores da capa estão certas.
-2. Aba UI → "Mostrar capas" continua ligando e desligando as capas.
-
+## 3. Botões
+1. Dê vários toques rápidos em ↓ logo ao entrar numa pasta, enquanto as capas
+   carregam: a seleção anda exatamente um item por toque.
+2. R+↑/↓ e a troca de abas com L/R continuam funcionando.

@@ -1,11 +1,12 @@
 /*
  * Cover-art / title-screen preview for the ROM browser.  See coverart.h.
  *
- * Reads "/IMGS/{c0}/{c1}/{CODE}.bmp" directly off the SD card, either:
- *  - 8bpp with its own palette (<= 216 colors, <= COVER_W x COVER_H, made by
- *    tools/covers), copied as is, or
- *  - 16bpp EZ-Flash-Omega (120x80), scaled down and dithered to a fixed 6x6x6
- *    palette cube.
+ * Reads "/COVERS/{c0}/{c1}/{CODE}.bmp" or "/IMGS/{c0}/{c1}/{CODE}.bmp" directly
+ * off the SD card, either:
+ *  - 8bpp with its own palette (<= 216 colors, <= 120x80, made by tools/covers),
+ *    copied as is, or
+ *  - 16bpp EZ-Flash-Omega (120x80), dithered to a fixed 6x6x6 palette cube.
+ * Both are scaled down to the selected display size.
  * Images use MEM_PALETTE[20..235] and are kept in a cache in cart SDRAM, so
  * revisited and prefetched entries show instantly.
  */
@@ -18,7 +19,8 @@
 #include "nanoprintf.h"
 #include "coverart.h"
 
-#define COVER_DIR  "/IMGS"
+#define COVER_DIR     "/IMGS"      // EZ-Flash Omega pack
+#define COVER_DIR_HQ  "/COVERS"    // tools/covers output
 
 // Cache layout (lives in cart SDRAM, provided by the menu). SDRAM is only
 // written with 16/32 bit accesses, so every field is a word.
@@ -133,27 +135,46 @@ static inline uint32_t rd32(const uint8_t *p) {
   return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
 }
 
-// 16bpp (EZ-Flash Omega) BMP: scaled down to COVER_W x COVER_H (each output
-// pixel averages a 2x2 source block) and mapped to the fixed color cube.
-// Rows are streamed: an output row is emitted as soon as the two source rows
+// Fits a width x height image in the display size (never enlarging it).
+static void fit_size(unsigned width, unsigned height, unsigned *dw, unsigned *dh) {
+  if (width * COVER_H <= height * COVER_W) {
+    *dh = MIN(height, COVER_H);
+    *dw = MAX(1u, width * *dh / height);
+  } else {
+    *dw = MIN(width, COVER_W);
+    *dh = MAX(1u, height * *dw / width);
+  }
+}
+
+// Returns the output row sampling source row `r` (sy = dy * height / dh), or
+// -1 if there is none.
+static int row_for(unsigned r, unsigned height, unsigned dh) {
+  unsigned dy = (r * dh + height - 1) / height;
+  return (dy < dh && dy * height / dh == r) ? (int)dy : -1;
+}
+
+// 16bpp (EZ-Flash Omega) BMP: scaled to the display size (when shrinking,
+// each output pixel averages a 2x2 source block) and mapped to the fixed color
+// cube. Rows are streamed: an output row is emitted as soon as the source rows
 // it needs have been read, whatever the row order of the file.
 static bool load_bmp16(FIL *fd, unsigned width, unsigned height, bool topdown,
                        t_pix_ent *slot) {
-  if (width > COVER_SRC_W || height > COVER_SRC_H)
+  if (width > COVER_MAX_W || height > COVER_MAX_H)
     return false;
   if (!cube_built)
     build_cube();
 
-  unsigned dw = MAX(1u, width * COVER_W / COVER_SRC_W);
-  unsigned dh = MAX(1u, height * COVER_H / COVER_SRC_H);
+  unsigned dw, dh;
+  fit_size(width, height, &dw, &dh);
   unsigned ox = (COVER_W - dw) / 2, oy = (COVER_H - dh) / 2;
-  uint8_t xs[COVER_W];
+  bool avgx = dw < width, avgy = dh < height;
+  uint8_t xs[COVER_MAX_W];
   for (unsigned dx = 0; dx < dw; dx++)
     xs[dx] = dx * width / dw;
 
   unsigned rowbytes = (width * 2 + 3) & ~3u;   // 4-byte aligned rows
-  uint8_t rowbuf[2][COVER_SRC_W * 2];
-  __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
+  uint8_t rowbuf[2][COVER_MAX_W * 2];
+  __attribute__((aligned(4))) uint8_t rowpix[COVER_MAX_W];
   memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
 
   for (unsigned fr = 0; fr < height; fr++) {
@@ -162,34 +183,33 @@ static bool load_bmp16(FIL *fd, unsigned width, unsigned height, bool topdown,
     if (FR_OK != f_read(fd, cur, rowbytes, &rd) || rd != rowbytes)
       return false;
 
-    // Image row just read and the pair of rows (lo, lo + 1) now available.
+    // Image row just read, and the pair of rows (lo, lo + 1) now available.
     unsigned r = topdown ? fr : height - 1 - fr;
-    const uint8_t *rlo, *rhi;
-    unsigned lo;
-    if (fr == 0) {
-      if (r != height - 1)
+    const uint8_t *rlo = cur, *rhi = cur;
+    unsigned lo = r;
+    int dy;
+    if (!avgy)
+      dy = row_for(r, height, dh);
+    else {
+      if (fr == 0 && r != height - 1)
         continue;          // Needs the next row too
-      lo = r; rlo = rhi = cur;           // Last row, paired with itself
-    } else {
-      lo = topdown ? r - 1 : r;
-      rlo = topdown ? prev : cur;
-      rhi = topdown ? cur : prev;
+      if (fr) {
+        lo = topdown ? r - 1 : r;
+        rlo = topdown ? prev : cur;
+        rhi = topdown ? cur : prev;
+      }
+      dy = row_for(lo, height, dh);
+      if (dy < 0 && topdown && r == height - 1) {
+        // A top-down file ends on its last row: emit rows sampling it alone.
+        dy = row_for(r, height, dh);
+        rlo = rhi = cur;
+      }
     }
-
-    // Output rows are sampled at sy = dy * height / dh: find the one using lo.
-    unsigned dy = (lo * dh + height - 1) / height;
-    if (dy >= dh || dy * height / dh != lo) {
-      // A top-down file ends on its last row: emit rows sampling it alone.
-      if (!(topdown && r == height - 1))
-        continue;
-      dy = (r * dh + height - 1) / height;
-      if (dy >= dh || dy * height / dh != r)
-        continue;
-      rlo = rhi = cur;
-    }
+    if (dy < 0)
+      continue;
 
     for (unsigned dx = 0; dx < dw; dx++) {
-      unsigned x0 = xs[dx], x1 = MIN(x0 + 1, width - 1);
+      unsigned x0 = xs[dx], x1 = avgx ? MIN(x0 + 1, width - 1) : x0;
       rowpix[ox + dx] = block_to_cube(rlo, rhi, x0, x1, dx, dy);
     }
     dma_memcpy16(&slot->pix[(oy + dy) * COVER_W], rowpix, COVER_W / 2);
@@ -198,13 +218,13 @@ static bool load_bmp16(FIL *fd, unsigned width, unsigned height, bool topdown,
   return true;
 }
 
-// 8bpp BMP with its own palette (at most CUBE_NCOLORS colors, at most
-// COVER_W x COVER_H), as made by tools/covers: copied as is, much nicer than
+// 8bpp BMP with its own palette (at most CUBE_NCOLORS colors), as made by
+// tools/covers: copied as is (nearest pixel when shrinking), much nicer than
 // dithering to the fixed cube and faster to load.
 static bool load_bmp8(FIL *fd, const uint8_t *hdr, unsigned width, unsigned height,
                       bool topdown, t_pix_ent *slot) {
   unsigned ncolors = rd32(&hdr[46]) ? rd32(&hdr[46]) : 256;
-  if (width > COVER_W || height > COVER_H || ncolors > CUBE_NCOLORS)
+  if (width > COVER_MAX_W || height > COVER_MAX_H || ncolors > CUBE_NCOLORS)
     return false;
 
   // The palette follows the info header (BGRA quads).
@@ -221,29 +241,37 @@ static bool load_bmp8(FIL *fd, const uint8_t *hdr, unsigned width, unsigned heig
 
   if (FR_OK != f_lseek(fd, rd32(&hdr[10])))
     return false;
-  unsigned ox = (COVER_W - width) / 2, oy = (COVER_H - height) / 2;
+  unsigned dw, dh;
+  fit_size(width, height, &dw, &dh);
+  unsigned ox = (COVER_W - dw) / 2, oy = (COVER_H - dh) / 2;
+  uint8_t xs[COVER_MAX_W];
+  for (unsigned dx = 0; dx < dw; dx++)
+    xs[dx] = dx * width / dw;
+
   unsigned rowbytes = (width + 3) & ~3u;
-  uint8_t rowbuf[(COVER_W + 3) & ~3u];
-  __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
+  uint8_t rowbuf[COVER_MAX_W];
+  __attribute__((aligned(4))) uint8_t rowpix[COVER_MAX_W];
   memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
   for (unsigned fr = 0; fr < height; fr++) {
     if (FR_OK != f_read(fd, rowbuf, rowbytes, &rd) || rd != rowbytes)
       return false;
-    for (unsigned x = 0; x < width; x++)
-      rowpix[ox + x] = CUBE_PAL_BASE + MIN(rowbuf[x], ncolors - 1);
-    unsigned r = topdown ? fr : height - 1 - fr;
-    dma_memcpy16(&slot->pix[(oy + r) * COVER_W], rowpix, COVER_W / 2);
+    int dy = row_for(topdown ? fr : height - 1 - fr, height, dh);
+    if (dy < 0)
+      continue;
+    for (unsigned dx = 0; dx < dw; dx++)
+      rowpix[ox + dx] = CUBE_PAL_BASE + MIN(rowbuf[xs[dx]], ncolors - 1);
+    dma_memcpy16(&slot->pix[(oy + dy) * COVER_W], rowpix, COVER_W / 2);
   }
   slot->ownpal = 1;
   return true;
 }
 
-// Reads the BMP for `gc` into the cache slot.
-static bool load_cover_file(uint32_t gc, t_pix_ent *slot) {
+// Reads the BMP for `gc` from `dir` into the cache slot.
+static bool load_cover_from(const char *dir, uint32_t gc, t_pix_ent *slot) {
   char path[64];
   int c0 = gc & 0xFF, c1 = (gc >> 8) & 0xFF, c2 = (gc >> 16) & 0xFF, c3 = gc >> 24;
   npf_snprintf(path, sizeof(path), "%s/%c/%c/%c%c%c%c.bmp",
-               COVER_DIR, c0, c1, c0, c1, c2, c3);
+               dir, c0, c1, c0, c1, c2, c3);
 
   FIL fd;
   if (FR_OK != f_open(&fd, path, FA_READ))
@@ -274,6 +302,13 @@ static bool load_cover_file(uint32_t gc, t_pix_ent *slot) {
 
   f_close(&fd);
   return ok;
+}
+
+// High quality covers (tools/covers) are looked up first, then the EZ-Flash
+// Omega pack, so both can be installed side by side.
+static bool load_cover_file(uint32_t gc, t_pix_ent *slot) {
+  return load_cover_from(COVER_DIR_HQ, gc, slot) ||
+         load_cover_from(COVER_DIR, gc, slot);
 }
 
 // 32 bit FNV-1a.
@@ -387,7 +422,15 @@ static void select_result(int slot) {
   }
 }
 
-void coverart_init(void *cachemem) {
+unsigned coverart_w = COVER_MAX_W, coverart_h = COVER_MAX_H;
+
+void coverart_init(void *cachemem, unsigned size) {
+  static const uint8_t sizes[COVER_SIZE_CNT][2] = {
+    { 60, 40 }, { 60, 40 }, { 90, 60 }, { COVER_MAX_W, COVER_MAX_H },
+  };
+  size = MIN(size, COVER_SIZE_CNT - 1);
+  coverart_w = sizes[size][0];
+  coverart_h = sizes[size][1];
   cache = (t_cover_cache*)cachemem;
   // Clear it in chunks (the DMA count is 16 bits).
   for (unsigned off = 0; off < sizeof(t_cover_cache); off += 0x8000)

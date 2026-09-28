@@ -2,11 +2,13 @@
 """
 Builds high quality covers for SuperFW (8bpp BMPs with their own palette).
 
-The firmware reads /IMGS/<c0>/<c1>/<CODE>.bmp, where CODE is the 4-character
-GBA game code (ie. BPEE). It accepts the 16bpp EZ-Flash Omega pack (dithered
-to a fixed palette on the console) and, much nicer, the 8bpp BMPs this script
-makes: resized with a good filter to fit 76x50 and reduced to an optimal
-palette of up to 216 colors (GBA 15-bit colors), with Floyd-Steinberg dither.
+The firmware looks for /COVERS/<c0>/<c1>/<CODE>.bmp and then for
+/IMGS/<c0>/<c1>/<CODE>.bmp, where CODE is the 4-character GBA game code (ie.
+BPEE). /IMGS is the 16bpp EZ-Flash Omega pack (dithered to a fixed palette on
+the console); /COVERS holds the much nicer 8bpp BMPs this script makes:
+resized with a good filter to fit 120x80 and reduced to an optimal palette of
+up to 216 colors (GBA 15-bit colors), with Floyd-Steinberg dither. Keep both
+folders: games missing from /COVERS (ie. ROM hacks) still use /IMGS.
 
 Sources (pick one):
   --imgs DIR        an existing IMGS folder (EZ-Flash Omega 16bpp BMPs, or any
@@ -17,14 +19,15 @@ Sources (pick one):
                     DAT ("Nintendo - Game Boy Advance.dat" from
                     libretro-database/metadat/no-intro)
 
-Output goes to OUT/IMGS/... (default OUT=.): copy that IMGS folder to the SD.
+Output goes to OUT/COVERS/... (default OUT=.): copy that COVERS folder to the
+root of the SD card.
 Requires Pillow (pip install pillow).
 """
 import argparse, os, re, struct, sys, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 
-COVER_W, COVER_H, NCOLORS = 76, 50, 216
+COVER_W, COVER_H, NCOLORS = 120, 80, 216
 LIBRETRO = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Game_Boy_Advance/master/"
 CODE_RE = re.compile(r"^[0-9A-Za-z]{4}$")
 
@@ -95,7 +98,7 @@ def write_bmp8(path, q, pal):
 
 def out_path(out, code):
     code = code.upper()
-    return os.path.join(out, "IMGS", code[0], code[1], code + ".bmp")
+    return os.path.join(out, "COVERS", code[0], code[1], code + ".bmp")
 
 
 def convert(src, out, code):
@@ -118,17 +121,25 @@ def from_folder(folder, out):
     return jobs
 
 
+def title_rank(title):
+    # Prefer retail releases: betas, demos and re-releases often lack images.
+    bad = ("(Beta", "(Proto", "(Demo", "(Sample", "(Virtual Console", "(Kiosk")
+    return sum(b in title for b in bad)
+
+
 def parse_dat(datfile):
-    """Returns {game code: title} from a No-Intro DAT (first title wins)."""
+    """Returns {game code: [titles, best first]} from a No-Intro DAT."""
     games, name = {}, None
     for line in open(datfile, encoding="utf-8", errors="replace"):
         m = re.match(r'\s*name "(.*)"$', line.rstrip())
         if m:
             name = m.group(1)
         m = re.match(r'\s*serial "([0-9A-Za-z]{4})"$', line.rstrip())
-        if m and name and m.group(1).upper() not in games:
-            games[m.group(1).upper()] = name
-    return games
+        if m and name:
+            titles = games.setdefault(m.group(1).upper(), [])
+            if name not in titles:
+                titles.append(name)
+    return {k: sorted(v, key=title_rank) for k, v in games.items()}
 
 
 def libretro_name(title):
@@ -168,10 +179,13 @@ def main():
         print("%d game codes in the DAT, downloading %s..." % (len(games), kind))
 
         def dl(item):
-            code, title = item
+            code, titles = item
             dest = os.path.join(args.cache, code + ".png")
-            url = LIBRETRO + kind + "/" + urllib.parse.quote(libretro_name(title)) + ".png"
-            return (dest, code) if fetch(url, dest) else None
+            for title in titles:   # Try every release of the game code
+                url = LIBRETRO + kind + "/" + urllib.parse.quote(libretro_name(title)) + ".png"
+                if fetch(url, dest):
+                    return (dest, code)
+            return None
         with ThreadPoolExecutor(args.j) as ex:
             jobs = [j for j in ex.map(dl, sorted(games.items())) if j]
     else:
@@ -180,7 +194,7 @@ def main():
     print("Converting %d images..." % len(jobs))
     with ThreadPoolExecutor(args.j) as ex:
         ok = sum(ex.map(lambda j: convert(j[0], args.out, j[1]), jobs))
-    print("Done: %d covers in %s" % (ok, os.path.join(args.out, "IMGS")))
+    print("Done: %d covers in %s" % (ok, os.path.join(args.out, "COVERS")))
 
 
 if __name__ == "__main__":

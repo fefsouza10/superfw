@@ -1392,7 +1392,7 @@ static bool is_gba_fname(const char *fn) {
 static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_rlist *st) {
   // Load the cover for the highlighted ROM (cheap unless the selection moved).
   bool cover_on = false;
-  if (!st->maxentries || !show_covers)
+  if (!st->maxentries || !cover_size)
     coverart_invalidate();
   else {
     const t_rentry *sel = &ents[st->selector];
@@ -1470,7 +1470,7 @@ void render_flashbrowser(volatile uint8_t *frame) {
   }
   else {
     // Flash games store their game code, so the cover loads without a file read.
-    if (show_covers) {
+    if (cover_size) {
       t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
       coverart_update_gcode((const uint8_t*)&sel->gamecode);
       if (coverart_prefetch_ready()) {
@@ -1547,7 +1547,7 @@ void render_browser(volatile uint8_t *frame) {
   else {
     // Load the cover/title-screen for the highlighted ROM.
     t_centry *sel = sdr_state->fileorder[smenu.browser.selector];
-    if (!show_covers)
+    if (!cover_size)
       coverart_invalidate();
     else {
       char fpath[512];
@@ -2145,8 +2145,9 @@ void render_ui_settings(volatile uint8_t *frame) {
   draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + rowh*4, 224);
   draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + rowh*4 );
 
+  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_COVER_SZ1 + MIN(cover_size, 3) - 1]);
   draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, 22 + rowh*5, 224);
-  draw_central_text(msgs[lang_id][show_covers ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + rowh*5 );
+  draw_central_text(cover_size ? tmpbuf : msgs[lang_id][MSG_KNOB_DISABLED], frame, colx, 22 + rowh*5 );
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
@@ -2336,7 +2337,7 @@ void menu_init(int sram_testres) {
 
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
-  coverart_init(sdr_state->covercache);
+  coverart_init(sdr_state->covercache, cover_size);
 
   reload_theme(menu_theme);
 
@@ -3367,6 +3368,7 @@ static void keypress_menu_settings(unsigned newkeys) {
 }
 
 static void keypress_menu_uisettings(unsigned newkeys) {
+  const uint8_t prev_cover_size = cover_size;
   if (newkeys & KEY_BUTTUP)
     smenu.uiset.selector = MAX(0, smenu.uiset.selector - 1);
   if (newkeys & KEY_BUTTDOWN)
@@ -3379,7 +3381,7 @@ static void keypress_menu_uisettings(unsigned newkeys) {
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
     else if (smenu.uiset.selector == UiSetCover)
-      show_covers ^= 1;
+      cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + COVER_SIZE_CNT - 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
     else if (smenu.uiset.selector == UiSetLang)
@@ -3393,7 +3395,7 @@ static void keypress_menu_uisettings(unsigned newkeys) {
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
     else if (smenu.uiset.selector == UiSetCover)
-      show_covers ^= 1;
+      cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
     else if (smenu.uiset.selector == UiSetLang)
@@ -3407,6 +3409,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
     else
       spop.alert_msg = msgs[lang_id][MSG_ERR_SETSAVE];
   }
+
+  // The cover cache holds images at the current size, rebuild it on changes.
+  if (cover_size != prev_cover_size && cover_size)
+    coverart_init(sdr_state->covercache, cover_size);
 
   reload_theme(menu_theme);
 }
@@ -3597,25 +3603,27 @@ void menu_keypress(unsigned newkeys) {
 const uint16_t keyrep = 0x0F3;
 static uint32_t keyreptmr[10] = {0};
 static uint8_t  keyrepcnt[10] = {0};
-static uint32_t prev_keys = 0;
 static uint32_t lr_held = 0;     // L/R pressed since they were last released
 static bool lr_combo = false;    // Another key was pressed while L/R were held
 
 // Handle button input. Supports key re-press whenever a button is held for a while.
 // This key repeat pattern can be tuned for speed and what not.
 uint16_t get_keypress() {
-  extern volatile uint16_t latched_keys;
-  uint32_t ckeys = curr_pressed_keys() | latched_keys;
-  latched_keys = 0;
+  extern volatile uint8_t key_presses[10];
+  uint32_t ckeys = curr_pressed_keys();
   uint32_t mkeys = 0;
   for (unsigned i = 0; i < 10; i++) {
-    if (ckeys & (1 << i)) {
-      if (!(prev_keys & (1 << i))) {
-        keyreptmr[i] = systime() + KEY_REPEAT_INITIAL;
-        mkeys |= (1 << i);
-        keyrepcnt[i] = 0;
-      }
-      else if (((1 << i) & keyrep) && systime() > keyreptmr[i]) {
+    // New presses are counted by the V-blank IRQ and reported one per call.
+    if (key_presses[i]) {
+      REG_IME = 0;
+      key_presses[i]--;
+      REG_IME = 1;
+      keyreptmr[i] = systime() + KEY_REPEAT_INITIAL;
+      mkeys |= (1 << i);
+      keyrepcnt[i] = 0;
+    }
+    else if (ckeys & (1 << i)) {
+      if (((1 << i) & keyrep) && systime() > keyreptmr[i]) {
         if (keyrepcnt[i] > KEY_REPEAT_CNT1)
           keyreptmr[i] = systime() + KEY_REPEAT_FAST;
         else {
@@ -3632,8 +3640,8 @@ uint16_t get_keypress() {
   // L/R are reported on release, and only if no other key was pressed while
   // they were held, so they also work as modifiers (ie. R+Up/Down).
   const uint32_t lrmask = KEY_BUTTL | KEY_BUTTR;
-  if (ckeys & lrmask) {
-    lr_held |= ckeys & lrmask;
+  if ((ckeys | mkeys) & lrmask) {
+    lr_held |= (ckeys | mkeys) & lrmask;
     if (mkeys & ~lrmask)
       lr_combo = true;
   }
@@ -3645,7 +3653,6 @@ uint16_t get_keypress() {
     lr_combo = false;
   }
 
-  prev_keys = ckeys;
   return mkeys;
 }
 

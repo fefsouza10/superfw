@@ -121,16 +121,22 @@ void check_pending_saves() {
 }
 
 volatile unsigned frame_count = 0;
-volatile uint16_t latched_keys = 0;
+volatile uint8_t key_presses[10];     // Presses not consumed yet, per key
+static uint16_t irq_prev_keys = 0;
 
 void irq_handler_fn() {
   // Clear all IRQs just in case
   REG_IF = 0xFFFF;
   // Gets called on every V-blank IRQ.
   frame_count++;
-  // Remember keys pressed during the frame, so that short presses are not
-  // lost while the menu is busy (ie. loading a cover).
-  latched_keys |= REG_KEYINPUT ^ 0x3FF;
+  // Count key presses, so that short (or repeated) presses are not lost
+  // while the menu is busy (ie. loading a cover).
+  uint16_t keys = REG_KEYINPUT ^ 0x3FF;
+  uint16_t pressed = keys & ~irq_prev_keys;
+  irq_prev_keys = keys;
+  for (unsigned i = 0; pressed; i++, pressed >>= 1)
+    if ((pressed & 1) && key_presses[i] < 4)
+      key_presses[i]++;
 }
 
 uint32_t systime() {

@@ -13,13 +13,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Maximum source thumbnail size (matches the EZ-Omega .bmp pack).
-#define COVER_SRC_W      120
-#define COVER_SRC_H      80
+// Maximum image and display size (matches the EZ-Omega .bmp pack).
+#define COVER_MAX_W      120
+#define COVER_MAX_H      80
 
-// Displayed size (even width, the framebuffer is written 16 bits at a time).
-#define COVER_W          76
-#define COVER_H          50
+// Selectable display sizes (1..3; 0 disables covers). Widths are even, the
+// framebuffer is written 16 bits at a time.
+#define COVER_SIZE_CNT   4
+extern unsigned coverart_w, coverart_h;
+#define COVER_W          coverart_w
+#define COVER_H          coverart_h
 
 // Fixed 6x6x6 color cube, placed in the free BG palette range 20..235
 // (theme=16..19, logo=1..15, IGM=240..244, selector=255 are left untouched).
@@ -27,8 +30,8 @@
 #define CUBE_NCOLORS     216
 
 // Bottom-right pane, just above the y=144 footer bar.
-#define COVER_PANE_X     (240 - COVER_W - 4)    // 160
-#define COVER_PANE_Y     (144 - COVER_H - 4)    // 90
+#define COVER_PANE_X     (240 - COVER_W - 2)
+#define COVER_PANE_Y     (144 - COVER_H - 2)
 
 // Number of consecutive frames the selection must stay on the same entry, with
 // no key held, before its cover is read from SD (cached covers show at once).
@@ -37,14 +40,15 @@
 #define COVER_PREFETCH_DELAY 20
 
 // Size of one cover image and of the cache buffer the caller must provide.
-#define COVER_BUF_SIZE     (COVER_W * COVER_H)
+#define COVER_BUF_SIZE     (COVER_MAX_W * COVER_MAX_H)
 #define COVER_CACHE_SLOTS  40
 #define COVER_CACHE_SIZE   (1024 * 16 + 64 * 4 + \
                             COVER_CACHE_SLOTS * (COVER_BUF_SIZE + 12 + CUBE_NCOLORS * 2))
 
 // Sets the (COVER_CACHE_SIZE bytes, word aligned, cart SDRAM) cache buffer and
-// clears the state. Must be called before any other function.
-void coverart_init(void *cachemem);
+// the display size (1..3), and clears the state. Must be called before any
+// other function, and again whenever the size changes.
+void coverart_init(void *cachemem, unsigned size);
 
 // Hide the cover (no entry selected, or the feature is off).
 void coverart_invalidate(void);

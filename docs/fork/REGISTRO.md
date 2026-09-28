@@ -49,7 +49,7 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 
 | # | Funcionalidade                       | Estado       | Prioridade |
 |---|--------------------------------------|--------------|------------|
-| A | Capas (cover-art) no navegador (PR #69 upstream) | Cache validado; capas 76x50 em alta qualidade p/ teste | 1 (principal) |
+| A | Capas (cover-art) no navegador (PR #69 upstream) | Cache validado; tamanho selecionável e /COVERS p/ teste | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Validado no GBA SP (28/09) | 2 |
 | C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR) | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
@@ -225,6 +225,36 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-28 — Tamanho de capa selecionável, pasta /COVERS e toques de botão
+- Pedido do teste da f142163: as capas voltam ao tamanho original e ganham uma opção
+  de tamanho. O Metroid Zero Mission (ProjectM) tinha ficado sem capa.
+- **Opção "Capas"** na aba UI (`cover_size` no `ui-settings`): Desativado /
+  Pequena 60x40 / Média 90x60 / **Grande 120x80 (padrão)**. Ela substitui o
+  liga/desliga: um `show_covers=0` antigo vira "Desativado". Mudar o tamanho
+  reinicia o cache. Tamanho e painel viram variáveis (`coverart_w/h`), e o painel
+  fica em (240-L-2, 144-A-2).
+- **Escala:** as capas de 16 bits só fazem média 2x2 quando encolhem (em 120x80
+  saem 1:1). As de 8 bits encolhem pelo pixel mais próximo. Nenhuma é ampliada.
+- **Duas pastas:** a firmware procura primeiro em `/COVERS` (alta qualidade, 8 bits)
+  e depois em `/IMGS` (EZ-Flash). O pacote do EZ-Flash pode ficar instalado junto
+  e cobre o que faltar no novo, como ROM hacks.
+- **Metroid ZM:** o conversor pegava o primeiro título do DAT com o código BMXE, que
+  era a "(Beta)", sem imagem no libretro. Agora ele tenta todas as versões, com as
+  lançadas primeiro. O pacote novo tem 2.706 capas em 120x80
+  (`COVERS-superfw-titulos.zip`).
+- **Cache:** 40 capas de até 120x80 (~418 KB). Para caber na SDRAM,
+  `BROWSER_MAXFN_CNT` caiu de 16K para 15K arquivos por pasta (`src/config.h`),
+  e o `t_sdram_state` ficou em 14.609.324 B.
+- **Botões:** o VBlank agora conta cada aperto de botão (`key_presses`), e o
+  `get_keypress` entrega um por chamada. Toques seguidos durante um carregamento
+  longo (capa 120x80) não se juntam nem se perdem, o que foi verificado no
+  emulador com 4 toques durante carregamentos.
+- **BMP de 24 bits:** não implementado. A tela no modo 4 só mostra 256 cores de
+  15 bits por vez, então uma capa de 24 bits seria convertida para o mesmo cubo
+  fixo das de 16 bits. Ficaria igual e mais lenta (arquivo de 28,8 KB). O ganho
+  real vem da paleta própria (8 bits, via conversor).
+- EWRAM `chis`: 91,1% (234.136 B).
 
 ### 2026-09-28 — Capas maiores (76x50) e em alta qualidade
 - Resultado do teste da a504000: tudo OK. Sleep de mais de 10 min com jogo da NOR

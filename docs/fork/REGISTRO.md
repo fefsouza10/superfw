@@ -37,7 +37,7 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Pronto p/ teste no hardware | 2 |
 | C | Modo suspender (sleep) no in-game menu | Protótipo p/ teste no hardware | 3 |
-| D | Captura de tela (screenshot) pelo in-game menu | Em espera (decisão do usuário) | 4 |
+| D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -182,7 +182,7 @@ consegue ler esses valores (o README já cita isso como a causa dos deslocamento
 depois do in-game menu). Por isso, nos modos de tiles, que são a maioria dos jogos, a
 captura sairia com os fundos desalinhados sempre que o jogo usar scroll, e errada nos
 BGs afins. Só os modos bitmap (3/4/5) e as telas sem scroll sairiam corretos.
-Esperando a decisão do usuário: pausar ou fazer mesmo assim. A versão barata seria
+**Decisão (28/09/2026): pausada pelo usuário.** Se for retomada, a versão barata seria
 gravar um dump no IGM (reaproveitando o `writefd_mem_snapshot`) e converter no PC com
 `tools/gbv2bmp.py`, sem gastar a EWRAM do firmware, que está em 97%.
 

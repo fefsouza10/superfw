@@ -13,9 +13,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Native thumbnail size (matches the EZ-Omega .bmp pack).
-#define COVER_W          120
-#define COVER_H          80
+// Maximum source thumbnail size (matches the EZ-Omega .bmp pack).
+#define COVER_SRC_W      120
+#define COVER_SRC_H      80
+
+// Displayed size: half of the source (2x2 blocks are averaged).
+#define COVER_W          (COVER_SRC_W / 2)
+#define COVER_H          (COVER_SRC_H / 2)
 
 // Fixed 6x6x6 color cube, placed in the free BG palette range 20..235
 // (theme=16..19, logo=1..15, IGM=240..244, selector=255 are left untouched).
@@ -23,12 +27,13 @@
 #define CUBE_NCOLORS     216
 
 // Bottom-right pane, just above the y=144 footer bar.
-#define COVER_PANE_X     (240 - COVER_W - 2)    // 118
-#define COVER_PANE_Y     (144 - COVER_H - 2)    // 62
+#define COVER_PANE_X     (240 - COVER_W - 4)    // 176
+#define COVER_PANE_Y     (144 - COVER_H - 4)    // 100
 
 // Number of consecutive update calls (one per rendered menu frame) the
-// selection must stay on the same entry before its cover is read from SD.
-#define COVER_LOAD_DELAY 6
+// selection must stay on the same entry, with no key held, before its cover is
+// read from SD (~1/4 s).
+#define COVER_LOAD_DELAY 15
 
 // Size of the image buffer the caller must provide to coverart_init.
 #define COVER_BUF_SIZE   (COVER_W * COVER_H)

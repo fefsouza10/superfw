@@ -39,6 +39,10 @@ endif
 
 FWBINFILES=firmware.ewram.gba res/patches.db res/fonts.pack
 
+ifeq ($(EMU_HARNESS),1)
+  PAYLOADFLAGS += -DEMU_HARNESS
+endif
+
 ifeq ($(ENABLE_DISK_LOGGING),1)
   PAYLOADFLAGS += -DENABLE_DISK_LOGGING
 endif
@@ -68,7 +72,7 @@ ifeq ($(BUNDLE_OTHER_EMULATORS),1)
                 emu/smsadvance-v2.5-scptch.gba.comp
 endif
 
-BASEFLAGS=$(GLOBAL_DEFINES) -mcpu=arm7tdmi -mtune=arm7tdmi
+BASEFLAGS=$(GLOBAL_DEFINES) -mcpu=arm7tdmi -mtune=arm7tdmi -fno-ipa-ra
 
 CFLAGS=-O2 -ggdb \
        $(BASEFLAGS) $(PAYLOADFLAGS) \

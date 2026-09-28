@@ -87,7 +87,11 @@ void setup_video() {
 
 void init_sdcard_and_mount() {
   // Init the SD card hardware
+  #ifdef EMU_HARNESS
+  unsigned ret = 0;
+  #else
   unsigned ret = sdcard_init(&sd_info);
+  #endif
   if (ret)
     fatal_init_error("Fatal SD card init err: %d", ret);
 

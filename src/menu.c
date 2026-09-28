@@ -3097,8 +3097,8 @@ static unsigned norgame_initial(int n) {
 }
 #endif
 
-// Returns the first entry after `cur` that starts with a different initial,
-// wrapping around to the top of the list at the end.
+// Returns the first entry of the letter group after the current one, wrapping
+// around to the top of the list at the end.
 static int next_initial(int cur, int cnt, unsigned (*initial)(int)) {
   unsigned c = initial(cur);
   for (int i = cur + 1; i < cnt; i++)
@@ -3107,9 +3107,35 @@ static int next_initial(int cur, int cnt, unsigned (*initial)(int)) {
   return 0;
 }
 
+// Returns the first entry of the letter group before the current one, wrapping
+// around to the last group at the top of the list.
+static int prev_initial(int cur, int cnt, unsigned (*initial)(int)) {
+  // Find the start of the current group, then step into the previous one.
+  while (cur > 0 && initial(cur - 1) == initial(cur))
+    cur--;
+  int p = cur > 0 ? cur - 1 : cnt - 1;
+  while (p > 0 && initial(p - 1) == initial(p))
+    p--;
+  return p;
+}
+
+// Handles R+Down / R+Up (jump to the next / previous initial letter). Returns
+// true if the keys were consumed.
+static bool letter_jump(unsigned newkeys, int *selector, int cnt, unsigned (*initial)(int)) {
+  if (!(curr_pressed_keys() & KEY_BUTTR) || !(newkeys & (KEY_BUTTUP | KEY_BUTTDOWN)))
+    return false;
+  if (newkeys & KEY_BUTTDOWN)
+    *selector = next_initial(*selector, cnt, initial);
+  else
+    *selector = prev_initial(*selector, cnt, initial);
+  return true;
+}
+
 static void keypress_menu_browse(unsigned newkeys) {
   if (smenu.browser.dispentries) {
-    // Move menu up and down
+    // Move menu up and down (R+Up/Down jumps between initial letters)
+    if (letter_jump(newkeys, &smenu.browser.selector, smenu.browser.dispentries, browser_initial))
+      newkeys &= ~(KEY_BUTTUP | KEY_BUTTDOWN);
     if (newkeys & KEY_BUTTUP)
       smenu.browser.selector = MAX(0, smenu.browser.selector - 1);
     if (newkeys & KEY_BUTTDOWN)
@@ -3122,8 +3148,16 @@ static void keypress_menu_browse(unsigned newkeys) {
       smenu.browser.selector = MIN(smenu.browser.dispentries - 1, smenu.browser.selector + BROWSER_ROWS);
       smenu.browser.seloff   = MIN(smenu.browser.dispentries - 1, smenu.browser.seloff   + BROWSER_ROWS);
     }
-    if (newkeys & KEY_BUTTSTA)
-      smenu.browser.selector = next_initial(smenu.browser.selector, smenu.browser.dispentries, browser_initial);
+    if (newkeys & KEY_BUTTSTA) {
+      // Start marks/unmarks the selected file as a favorite.
+      t_centry *e = sdr_state->fileorder[smenu.browser.selector];
+      if (!e->isdir) {
+        char path[MAX_FN_LEN];
+        strcpy(path, smenu.browser.cpath);
+        strcat(path, e->fname);
+        toggle_favorite(path, FLAG_RECENT_SD);
+      }
+    }
     // Move into a new dir and/or open a file
     if (newkeys & KEY_BUTTA) {
       t_centry *e = sdr_state->fileorder[smenu.browser.selector];
@@ -3171,6 +3205,8 @@ static void keypress_menu_browse(unsigned newkeys) {
 #ifdef SUPPORT_NORGAMES
 static void keypress_menu_norbrowse(unsigned newkeys) {
   if (smenu.fbrowser.maxentries) {
+    if (letter_jump(newkeys, &smenu.fbrowser.selector, smenu.fbrowser.maxentries, norgame_initial))
+      newkeys &= ~(KEY_BUTTUP | KEY_BUTTDOWN);
     if (newkeys & KEY_BUTTUP)
       smenu.fbrowser.selector = MAX(0, smenu.fbrowser.selector - 1);
     if (newkeys & KEY_BUTTDOWN)
@@ -3183,8 +3219,8 @@ static void keypress_menu_norbrowse(unsigned newkeys) {
       smenu.fbrowser.selector = MIN(smenu.fbrowser.maxentries - 1, smenu.fbrowser.selector + NORGAMES_ROWS);
       smenu.fbrowser.seloff   = MIN(smenu.fbrowser.maxentries - 1, smenu.fbrowser.seloff   + NORGAMES_ROWS);
     }
-    if (newkeys & KEY_BUTTSTA)
-      smenu.fbrowser.selector = next_initial(smenu.fbrowser.selector, smenu.fbrowser.maxentries, norgame_initial);
+    if (newkeys & KEY_BUTTSTA)   // Start marks/unmarks the game as a favorite.
+      toggle_favorite(sdr_state->nordata.games[smenu.fbrowser.selector].game_name, FLAG_RECENT_NOR);
 
     if (newkeys & KEY_BUTTA)
       browser_open_nor(&sdr_state->nordata.games[smenu.fbrowser.selector]);
@@ -3535,6 +3571,8 @@ const uint16_t keyrep = 0x0F3;
 static uint32_t keyreptmr[10] = {0};
 static uint8_t  keyrepcnt[10] = {0};
 static uint32_t prev_keys = 0;
+static uint32_t lr_held = 0;     // L/R pressed since they were last released
+static bool lr_combo = false;    // Another key was pressed while L/R were held
 
 // Handle button input. Supports key re-press whenever a button is held for a while.
 // This key repeat pattern can be tuned for speed and what not.
@@ -3560,6 +3598,22 @@ uint16_t get_keypress() {
     }
     else
       keyreptmr[i] = 0;
+  }
+
+  // L/R are reported on release, and only if no other key was pressed while
+  // they were held, so they also work as modifiers (ie. R+Up/Down).
+  const uint32_t lrmask = KEY_BUTTL | KEY_BUTTR;
+  if (ckeys & lrmask) {
+    lr_held |= ckeys & lrmask;
+    if (mkeys & ~lrmask)
+      lr_combo = true;
+  }
+  mkeys &= ~lrmask;
+  if (!(ckeys & lrmask) && lr_held) {
+    if (!lr_combo)
+      mkeys |= lr_held;
+    lr_held = 0;
+    lr_combo = false;
   }
 
   prev_keys = ckeys;

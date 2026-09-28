@@ -29,15 +29,29 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 - O CI (`.github/workflows/build-release.yml`) só roda em push para `master` e em
   tags. Os branches de trabalho não são compilados pelo CI.
 
+**Teste no emulador (sem hardware).** `tools/emu/harness.c` roda o menu no mGBA
+(libmgba) simulando o mínimo do SuperCard: o registrador de modo, a SDRAM gravável e
+um cartão SD vindo de uma imagem FAT. O firmware precisa ser compilado com
+`EMU_HARNESS=1`, que troca o driver do SD por registradores "mágicos" em
+`0x09F00000` (`fatfs/diskio.c`). Nunca grave um build `EMU_HARNESS` no cartucho.
+
+```sh
+sudo apt-get install libmgba-dev dosfstools mtools
+gcc -O1 -o harness tools/emu/harness.c -lmgba
+make BOARD=chis EMU_HARNESS=1
+mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
+./harness superfw.gba sd.img roteiro.txt saida/   # roteiro: wait N / press R+D 3 / shot nome / trace KEYS
+```
+
 ---
 
 ## 2. Estado das funcionalidades
 
 | # | Funcionalidade                       | Estado       | Prioridade |
 |---|--------------------------------------|--------------|------------|
-| A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
-| B | Navegação: pular por letra + favoritos | Pronto p/ teste no hardware | 2 |
-| C | Modo suspender (sleep) no in-game menu | Protótipo p/ teste no hardware | 3 |
+| A | Capas (cover-art) no navegador (PR #69 upstream) | 2ª rodada de teste (capa em 60x40) | 1 (principal) |
+| B | Navegação: pular por letra + favoritos | 2ª rodada de teste (R+↑/↓, Start favorita) | 2 |
+| C | Modo suspender (sleep) no in-game menu | Funcionou no GBA SP (28/09); falta o teste longo | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
@@ -212,6 +226,33 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Correções do 1º teste no hardware (build 303ea6f)
+- **Crash na aba de configurações gerais (corrigido).** Reproduzido no emulador
+  (`tools/emu/harness.c`, novo). Causa: bug do GCC 13 com `-fipa-ra` no Thumb.
+  Com o `-Os` do `menu.c`, `render_icon_trans()` deixou de ser inline. O epílogo
+  dela devolve o controle com `pop {r0}; bx r0` e destrói o `r0`, mas o IPA-RA diz
+  ao chamador que o `r0` sobrevive. O laço de `render_settings()` guardava o `x` em
+  `r0`, nunca terminava e escrevia ícones para além de `fobjs[64]`. Assim ele
+  sobrescrevia a IWRAM até o tratador de IRQ. Correção: `-fno-ipa-ra` em
+  `BASEFLAGS` (`Makefile`), que vale para todos os binários (+48 bytes).
+- **Capas pela metade (60x40).** Cada bloco 2x2 do BMP vira um pixel, pela média
+  das cores e com o dithering aplicado sobre a média, que tem mais precisão
+  (`src/coverart.c`). O painel foi para (176,100). O buffer na SDRAM caiu para
+  2.400 B. O arquivo continua sendo o BMP 120x80 do EZ-Flash Omega.
+- **Carregamento da capa:** só começa depois que todos os botões são soltos, com
+  15 quadros (~1/4 s) parado no mesmo item (`COVER_LOAD_DELAY`, antes 6). Rolar a
+  lista ou pular de letra segurando R não carrega nada no caminho.
+- **Pular por letra:** R+↓ vai para a próxima letra e R+↑ volta para a anterior
+  (no SD e na NOR). A troca de aba por L/R passou a acontecer **ao soltar** o botão,
+  e só se nenhum outro botão foi apertado junto (`get_keypress`). O Start não pula
+  mais de letra.
+- **Favoritos:** Start marca e desmarca o favorito também no navegador do SD (em
+  arquivos) e na aba da NOR. Continua valendo na aba Recentes.
+- **Sleep:** funcionou no teste. O LED verde do SP continua aceso porque é o LED de
+  energia, ligado direto ao interruptor. O software não o controla. Esse é o mesmo
+  comportamento do sleep dos jogos comerciais.
+- EWRAM do `chis`: 90,2% (231.812 B). IGM inalterado (48.960 B).
+
 ### 2026-09-28 — Otimizações de memória e de desenho dos ícones
 - A imagem da capa (`cover_pix`, 9.600 B) saiu da EWRAM e foi para a SDRAM do cart
   (`sdr_state->coverpix`, `src/menu.c`), recebida por `coverart_init()`
@@ -355,6 +396,11 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   citado no README de mikermak/retroid-super-flash) usa BMP de 16 bits no formato
   nativo do GBA. Capas feitas pela comunidade (EZ Omega Thumbmaker, guias) costumam
   ser de 24 bits, que o firmware **ainda não lê**. É uma melhoria possível.
-- Botões nos navegadores: L/R trocam de aba, Select abre o gerenciador de arquivos
-  (na NOR, apaga o jogo), ←/→ pulam uma página e Start pula para a próxima letra
-  (no SD e na NOR) ou marca o favorito (na aba Recentes).
+- Botões nos navegadores: L/R trocam de aba ao soltar, Select abre o gerenciador de
+  arquivos (na NOR, apaga o jogo), ←/→ pulam uma página, R+↓/R+↑ pulam para a
+  próxima/anterior letra inicial (SD e NOR) e Start marca/desmarca o favorito (SD,
+  NOR e Recentes).
+- **Cuidado com `-Os`/funções não-inline no Thumb:** o GCC 13 com `-fipa-ra` gera
+  código errado quando uma função `void` volta com `pop {r0}; bx r0` (ver entrada de
+  28/09, "Correções do 1º teste"). O `Makefile` agora usa `-fno-ipa-ra`, e ele não
+  deve ser removido.

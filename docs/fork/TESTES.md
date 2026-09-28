@@ -1,64 +1,50 @@
 # Roteiro de testes no GBA SP (SuperChis Prime)
 
-Firmware: `superfw-chis-303ea6f.fw` (branch `claude/project-thread-3djlx9`, commit `303ea6f`).
+Firmware: `superfw-chis-89be7ee.fw` (branch `claude/project-thread-3djlx9`, commit `89be7ee`).
+Teste anterior: `303ea6f` (28/09). Os resultados estão em `REGISTRO.md`.
 
 ## Antes de começar
 - Faça backup da pasta `/.superfw` e dos seus `.sav` do SD.
-- Teste primeiro sem gravar na flash: copie o `.fw` para o SD com a extensão `.gba` e
-  inicie pela SuperFW instalada. Se ele não bootar assim, tente de novo com o in-game
-  menu e os patches desligados no popup de carregamento.
+- Rode primeiro como `.gba`, iniciando pela SuperFW instalada, igual ao teste anterior.
 - Anote o resultado de cada item: OK, falhou (o que aconteceu) ou não testado.
 
-## 1. Básico (regressão das otimizações de memória)
-1. O menu abre e os ícones das abas aparecem certos, sem ícones "fantasmas" e sem
-   ícones faltando.
-2. Navegar pelas abas com L/R, abrir popups (Select, carregar ROM) e fechar com B.
-3. Carregar um jogo pelo SD e um pela NOR (se tiver), jogar um pouco e salvar.
-4. In-game menu: abrir, fazer um savestate, carregar o savestate e voltar ao jogo.
+## 1. Crash da aba de configurações (corrigido)
+1. Com L/R, vá até a aba de configurações gerais. Ela abre sem travar.
+2. Role a lista inteira com ↓ e ↑, mude uns valores com ←/→ e volte com L.
+3. Vá até a aba UI, desative "Mostrar capas", salve e reinicie. Confira que as capas
+   somem e que a opção continua desativada. Depois reative. (Este é o 2.6 que ficou
+   pendente.)
 
-## 2. Capas
-1. Coloque um pacote de capas do EZ-Flash Omega no SD: `/IMGS/<1ª letra>/<2ª letra>/<CÓDIGO>.bmp`
-   (por exemplo `/IMGS/B/P/BPEE.bmp`, BMP de 120x80 e 16 bits).
-2. No navegador do SD, ao parar sobre um `.gba` que tem capa, ela aparece no canto
-   inferior direito depois de um instante. Os nomes longos não passam por cima dela.
-3. Rolar a lista rápido (segurar ↓) não deve travar. A capa só aparece quando você para.
-4. A capa também aparece nas abas Recentes (inclusive para jogos da NOR), Favoritos e
-   na aba da NOR.
-5. As cores estão boas, com o dithering, e sem cores trocadas (vermelho e azul
-   invertidos, por exemplo).
-6. Aba UI → "Mostrar capas" → Desativado: as capas somem. Salvar, reiniciar e
-   conferir que a opção continua como você deixou.
-7. Pastas, arquivos que não são `.gba` e jogos sem capa não mostram painel nenhum.
-8. A aba Info (logo) não deixa as cores da capa erradas quando você volta ao navegador.
+## 2. Troca de abas (mudou)
+1. L/R agora trocam de aba **ao soltar** o botão, não ao apertar. Confira que isso
+   não incomoda no uso.
+2. Nos popups (carregar ROM etc.), L/R continuam trocando de sub-página.
 
-## 3. Favoritos
-1. Navegador do SD → Select → "Adicionar aos favoritos". Aparece a mensagem e surge a
-   aba com a estrela.
-2. Select de novo no mesmo arquivo: agora o botão diz "Remover dos favoritos".
-3. Aba Recentes → Start num jogo do SD e num jogo da NOR: os dois vão para os favoritos.
-   Start de novo remove.
-4. Aba Favoritos: A abre o jogo e Select pede confirmação e remove.
-5. Remover todos os favoritos faz a aba sumir, e o L/R deixa de parar nela.
-6. Desligar e ligar: os favoritos continuam lá (`/.superfw/favorites.txt`).
-7. Com "Recentes" desativado na aba UI, L/R continuam navegando certo entre as abas.
+## 3. Capas (60x40)
+1. A capa aparece menor no canto inferior direito. Ela está mais bonita do que antes?
+2. Segurar ↓ para rolar a lista: nada carrega no caminho. A capa só aparece quando
+   você solta o botão e para (~1/4 s).
+3. A capa aparece mais rápido do que antes?
+4. Os nomes longos e o tamanho do arquivo não passam por cima dela.
 
-## 4. Pular por letra
-1. Numa pasta com muitos jogos, o Start pula para a primeira entrada com a próxima
-   letra inicial.
-2. Na última letra, o Start volta ao topo da lista.
-3. Na aba da NOR, o Start funciona da mesma forma.
+## 4. Pular por letra (mudou)
+1. No navegador do SD, segure R e aperte ↓: vai para o primeiro jogo da próxima letra.
+   Com R segurado, cada ↓ pula mais uma letra. Ao soltar R, **não** troca de aba.
+2. R+↑ volta para o início da letra anterior. No topo da lista, vai para a última letra.
+3. O mesmo na aba da NOR.
+4. Ao pular várias letras seguidas, nenhuma capa carrega até você soltar os botões.
 
-## 5. Sleep (in-game menu)
-1. Abrir o in-game menu: a última opção é "Suspender (L+R+Sel)", e todas as 7 opções
-   cabem na tela.
-2. Escolher Suspender: a tela apaga, e a luz do SP também apaga (ou não; anote).
-3. Pressionar L+R+Select: o jogo volta de onde parou, com som e imagem normais.
-4. **Teste crítico:** jogo carregado do SD, dormindo por 5 a 10 minutos. Depois de
-   acordar, o jogo continua sem travar e sem gráficos corrompidos? Salve e confira se
-   o save ficou bom.
-5. O mesmo teste com um jogo rodando da NOR.
-6. Opcional: deixar dormindo por mais tempo e comparar o gasto de bateria.
+## 5. Favoritos com Start
+1. Navegador do SD: Start num arquivo mostra "Adicionado aos favoritos", e Start de
+   novo remove. Em pastas, o Start não faz nada.
+2. Aba da NOR: Start favorita o jogo (era o item 3.3 que falhou), e Start de novo
+   remove.
+3. Na aba Favoritos, abra o jogo da NOR com A.
+4. Aba Recentes: Start num jogo do SD e num da NOR continua funcionando.
 
-## Se algo falhar
-Anote o que aconteceu e em qual item. Se possível, habilite o log
-(`make ENABLE_DISK_LOGGING=1`, sob pedido) para investigar.
+## 6. Sleep (só o teste longo que faltou)
+1. Jogo do SD dormindo por 5 a 10 minutos. Depois de acordar com L+R+Select, o jogo
+   continua sem travar e o save funciona?
+2. O mesmo com um jogo da NOR.
+3. O LED verde fica aceso porque é o LED de energia, ligado direto ao interruptor do
+   SP. Isso é esperado.

@@ -252,6 +252,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   energia, ligado direto ao interruptor. O software não o controla. Esse é o mesmo
   comportamento do sleep dos jogos comerciais.
 - EWRAM do `chis`: 90,2% (231.812 B). IGM inalterado (48.960 B).
+- Build para teste: `superfw-chis-89be7ee.fw`, com o roteiro em `docs/fork/TESTES.md`.
 
 ### 2026-09-28 — Otimizações de memória e de desenho dos ícones
 - A imagem da capa (`cover_pix`, 9.600 B) saiu da EWRAM e foi para a SDRAM do cart

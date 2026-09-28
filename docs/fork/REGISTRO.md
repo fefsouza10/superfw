@@ -211,6 +211,28 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Análise de memória e dos PRs upstream #79 e #80
+- **Memória EWRAM (firmware `chis`, 96,9%):** o linker recusa o build se estourar
+  (região `EWRAM` de 251 KB em `ldscripts/gba_ewram.ld`), então não há risco de falha
+  silenciosa em tempo de execução. A pilha fica na IWRAM e não existe heap. O limite
+  só restringe as próximas funcionalidades.
+  Otimizações medidas, ainda não aplicadas:
+  - Mover `cover_pix`, `cover_key` e `pending_key` (`src/coverart.c`, 10.624 B de
+    `.sbss`) para o `sdr_state` na SDRAM libera ~10,4 KB.
+  - Compilar `src/menu.c` com `-Os` (via `#pragma GCC optimize ("Os")`, como já faz o
+    `recent.c`) reduz o `.text` em ~7,4 KB. O build com essa mudança ficou em 93,8%.
+  - As duas juntas deixam o firmware em ~89%.
+- **PR #79** (Sam Casteel, "Adding Key Repeat"): **não adotar**. O master já tem
+  repetição de teclas com aceleração (commit `959ca6c`), e o PR conflita em
+  `main.c` e `menu.c`.
+- **PR #80** (Sam Casteel, "rendering speedup" + "fw naming"): **não adotar como
+  está**. Ele commita binários e cabeçalhos gerados (`superfw-chis.fw`,
+  `src/menu_messages.h`, `src/messages_data.h`). Também troca os padrões do Makefile
+  (`BOARD=chis`, `COMPRESSION_RATIO=10`) e o nome do arquivo gerado, o que quebraria o
+  `mv superfw.gba` do `build-release.yml`. A única parte útil é copiar o OAM com um
+  DMA em vez de um laço (`menu_flip`). O ganho é pequeno e pode ser portado à parte,
+  se valer a pena.
+
 ### 2026-09-28 — Sleep no in-game menu (funcionalidade C, protótipo)
 - Item novo "Suspender (L+R+Sel)" no fim do menu principal do IGM
   (`action_sleep()`, `src/ingame_menu.c`). As linhas do menu passaram de 19 para

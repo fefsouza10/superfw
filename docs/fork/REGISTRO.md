@@ -351,6 +351,10 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   precisa ser enxuto.
 - Espaço do firmware principal (`chis`): EWRAM ~90% usada após as otimizações de 28/09. Vale
   medir a cada funcionalidade (`--print-memory-usage` no log do make).
+- Capas: o pacote oficial do EZ-Flash Omega (`https://www.ezflash.cn/zip/IMGS.zip`,
+  citado no README de mikermak/retroid-super-flash) usa BMP de 16 bits no formato
+  nativo do GBA. Capas feitas pela comunidade (EZ Omega Thumbmaker, guias) costumam
+  ser de 24 bits, que o firmware **ainda não lê**. É uma melhoria possível.
 - Botões nos navegadores: L/R trocam de aba, Select abre o gerenciador de arquivos
   (na NOR, apaga o jogo), ←/→ pulam uma página e Start pula para a próxima letra
   (no SD e na NOR) ou marca o favorito (na aba Recentes).

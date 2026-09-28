@@ -249,7 +249,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
     códigos do DAT No-Intro do libretro-database.
 - Cache: cada entrada guarda também a paleta. Agora são 40 capas, e o
   `t_sdram_state` ocupa 15.176.044 B (28 KB de folga).
-- EWRAM `chis`: 90,7% (233.036 B).
+- EWRAM `chis`: 90,7% (233.036 B). Build para teste: `superfw-chis-f142163.fw`; pacote pronto com 2.692 capas: `IMGS-superfw-titulos.zip`.
 
 ### 2026-09-28 — Capas instantâneas (cache + pré-carregamento)
 - Medido no emulador: converter uma capa gastava ~5M ciclos (~0,3 s). O motivo eram

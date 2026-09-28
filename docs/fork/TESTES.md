@@ -1,7 +1,7 @@
 # Roteiro de testes no GBA SP (SuperChis Prime)
 
-Firmware: `superfw-chis-a504000.fw` (branch `claude/project-thread-3djlx9`, commit `a504000`).
-Teste anterior: `303ea6f` (28/09). Os resultados estão em `REGISTRO.md`.
+Firmware: `superfw-chis-f142163.fw` (branch `claude/project-thread-3djlx9`, commit `f142163`).
+Teste anterior: `a504000` (28/09), tudo OK. Os resultados estão em `REGISTRO.md`.
 
 ## Antes de começar
 - Faça backup da pasta `/.superfw` e dos seus `.sav` do SD.

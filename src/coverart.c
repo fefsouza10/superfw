@@ -16,16 +16,18 @@
 
 #define COVER_DIR  "/IMGS"
 
-// Big buffers go in EWRAM (.sbss); the default .bss lives in scarce IWRAM.
+// Keys go in EWRAM (.sbss); the default .bss lives in scarce IWRAM.
 #define EWRAM_BSS  __attribute__((section(".sbss")))
 
-static EWRAM_BSS __attribute__((aligned(4))) uint8_t cover_pix[COVER_W * COVER_H];
-static EWRAM_BSS char cover_key[512];     // ROM path the current state belongs to
+// The 8bpp image lives in cart SDRAM (provided by the menu, see coverart_init)
+// to save EWRAM. SDRAM is only written with 16 bit accesses.
+static uint8_t *cover_pix;
+static EWRAM_BSS char cover_key[MAX_FN_LEN];     // ROM path the current state belongs to
 static bool     cover_have;               // a valid cover is loaded (.bss/IWRAM -> zeroed)
 static uint16_t cube_pal[CUBE_NCOLORS];   // the fixed color cube (GBA BGR555)
 static bool     cube_built;
 // Selection that was requested but not loaded yet (see COVER_LOAD_DELAY).
-static EWRAM_BSS char pending_key[512];
+static EWRAM_BSS char pending_key[MAX_FN_LEN];
 static unsigned pending_cnt;
 
 // Build the 6x6x6 cube once. Each channel uses 6 evenly spread 5-bit levels.
@@ -104,10 +106,12 @@ static bool load_cover_file(const uint8_t gcode[4]) {
         build_cube();
 
       // Pad letterbox (smaller images) with cube index 0 (= black).
-      memset(cover_pix, CUBE_PAL_BASE, sizeof(cover_pix));
+      dma_memset16(cover_pix, dup8(CUBE_PAL_BASE), COVER_W * COVER_H / 2);
 
       unsigned rowbytes = ((unsigned)width * 2 + 3) & ~3u;   // 4-byte aligned rows
       uint8_t rowbuf[COVER_W * 2];
+      __attribute__((aligned(4))) uint8_t rowpix[COVER_W];
+      memset(rowpix, CUBE_PAL_BASE, sizeof(rowpix));
       ok = true;
       for (int sy = 0; sy < height; sy++) {
         if (FR_OK != f_read(&fd, rowbuf, rowbytes, &rd) || rd != rowbytes) {
@@ -115,9 +119,9 @@ static bool load_cover_file(const uint8_t gcode[4]) {
           break;
         }
         unsigned dy = topdown ? (unsigned)sy : (unsigned)(height - 1 - sy);
-        uint8_t *dst = &cover_pix[dy * COVER_W];
         for (int x = 0; x < width; x++)
-          dst[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8), x, dy);
+          rowpix[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8), x, dy);
+        dma_memcpy16(&cover_pix[dy * COVER_W], rowpix, COVER_W / 2);
       }
 
       if (ok)
@@ -127,6 +131,11 @@ static bool load_cover_file(const uint8_t gcode[4]) {
 
   f_close(&fd);
   return ok;
+}
+
+void coverart_init(uint8_t *pixbuf) {
+  cover_pix = pixbuf;
+  coverart_invalidate();
 }
 
 void coverart_invalidate(void) {

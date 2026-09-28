@@ -211,6 +211,25 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Otimizações de memória e de desenho dos ícones
+- A imagem da capa (`cover_pix`, 9.600 B) saiu da EWRAM e foi para a SDRAM do cart
+  (`sdr_state->coverpix`, `src/menu.c`), recebida por `coverart_init()`
+  (`src/coverart.c/.h`), que substitui a chamada de `coverart_invalidate()` no
+  `menu_init()`. A SDRAM só recebe escritas de 16 bits: cada linha é montada numa
+  pilha local e copiada com `dma_memcpy16`, e o letterbox usa `dma_memset16`. Isso
+  segue o padrão do resto do menu, que evita escrita de byte na SDRAM. As chaves
+  (`cover_key`, `pending_key`) ficaram na EWRAM, mas foram de 512 para `MAX_FN_LEN`
+  (256).
+- `src/menu.c` passou a ser compilado com `#pragma GCC optimize ("Os")`.
+- A lista de ícones (`t_oamobj`) agora tem o layout de uma entrada de OAM e é copiada
+  com um único DMA em `menu_flip()`, uma ideia do PR upstream #80. Há uma proteção
+  para `objnum == 0`, que o PR não tinha: um DMA com contagem 0 copia 0x4000 unidades.
+- Resultado na EWRAM: `chis` 96,9% → **89,9%** (231.172 B), `sd` 84,6% e `lite` 84,7%.
+  O IGM não mudou (79,7%).
+- Verificação: as três variantes compilam sem warnings novos. O teste de host das
+  capas foi refeito com o buffer externo (BMP bottom-up e top-down, letterbox,
+  debounce e dithering).
+
 ### 2026-09-28 — Análise de memória e dos PRs upstream #79 e #80
 - **Memória EWRAM (firmware `chis`, 96,9%):** o linker recusa o build se estourar
   (região `EWRAM` de 251 KB em `ldscripts/gba_ewram.ld`), então não há risco de falha
@@ -329,7 +348,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 - A NOR é tratada como 128 MiB, em blocos de 4 MiB (`src/flash_mgr.h`).
 - Espaço do IGM: ~49 KB de 60 KB em EWRAM e 4 KB de IWRAM. Todo código novo no IGM
   precisa ser enxuto.
-- Espaço do firmware principal (`chis`): EWRAM ~96% usada após as capas. Vale
+- Espaço do firmware principal (`chis`): EWRAM ~90% usada após as otimizações de 28/09. Vale
   medir a cada funcionalidade (`--print-memory-usage` no log do make).
 - Botões nos navegadores: L/R trocam de aba, Select abre o gerenciador de arquivos
   (na NOR, apaga o jogo), ←/→ pulam uma página e Start pula para a próxima letra

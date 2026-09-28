@@ -18,6 +18,9 @@
 
 #include <string.h>
 
+// The menu is not speed critical, optimize it for size (EWRAM is scarce).
+#pragma GCC optimize ("Os")
+
 #include "compiler.h"
 #include "gbahw.h"
 #include "patchengine.h"
@@ -412,6 +415,7 @@ typedef struct {
   t_rentry rentries[RECENT_MAXFN_CNT];
   t_rentry favorites[RECENT_MAXFN_CNT];
   t_reg_entry_max nordata;
+  uint8_t coverpix[COVER_BUF_SIZE] __attribute__((aligned(4)));
 } t_sdram_state;
 
 _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't exceed 14.5MB");
@@ -419,10 +423,14 @@ _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't 
 t_sdram_state *sdr_state = (t_sdram_state*)0x08000000;
 uint8_t *hiscratch = (uint8_t*)ROM_HISCRATCH_U8;
 
+// Laid out as an OAM entry, so the list can be DMA'ed straight into OAM.
 typedef struct {
-  uint16_t x, y;
-  unsigned tn;
+  uint16_t attr0;   // Y position and flags
+  uint16_t attr1;   // X position and size
+  uint16_t attr2;   // Tile number
+  uint16_t attr3;   // Affine parameter (unused, zero)
 } t_oamobj;
+_Static_assert (sizeof(t_oamobj) == 8, "t_oamobj must match an OAM entry");
 
 static bool enable_flashing = false;
 static unsigned framen = 0;
@@ -1220,11 +1228,13 @@ static void flashbrowser_reload() {
 }
 
 static inline void render_icon(unsigned x, unsigned y, unsigned iconn) {
-  fobjs[objnum++] = (t_oamobj){x, y, 8*iconn };
+  // 256 entries palette, 16x16 size, OBJ tiles start at 512 in Mode 4.
+  fobjs[objnum++] = (t_oamobj){ y | 0x2000, x | 0x4000, 8*iconn + 512, 0 };
 }
 
 static inline void render_icon_trans(unsigned x, unsigned y, unsigned iconn) {
-  fobjs[objnum++] = (t_oamobj){x, y | 0x0400, 8*iconn };
+  // Same as above, but semi-transparent.
+  fobjs[objnum++] = (t_oamobj){ y | 0x2400, x | 0x4000, 8*iconn + 512, 0 };
 }
 
 // Guess the file type based on the file name.
@@ -2280,11 +2290,8 @@ void menu_render(unsigned fcnt) {
 }
 
 void menu_flip() {
-  for (unsigned i = 0; i < objnum; i++) {
-    MEM_OAM[i*4+0] = fobjs[i].y | 0x2000;  // Use 256 entries palette
-    MEM_OAM[i*4+1] = fobjs[i].x | 0x4000;  // Size 16x16
-    MEM_OAM[i*4+2] = fobjs[i].tn + 512;    // OBJ numbers start at 512 for Mode 4
-  }
+  if (objnum)
+    dma_memcpy16(&MEM_OAM[0], fobjs, objnum * 4);
   dma_memset16(&MEM_OAM[objnum*4], 0, 256 - objnum*2);  // Clear unused objects
   REG_DISPCNT = (REG_DISPCNT & ~0x10) | (framen << 4);
   framen ^= 1;
@@ -2302,7 +2309,7 @@ void menu_init(int sram_testres) {
 
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
-  coverart_invalidate();   // Its state lives in (uninitialized) EWRAM .sbss
+  coverart_init(sdr_state->coverpix);
 
   reload_theme(menu_theme);
 

@@ -30,6 +30,13 @@
 // selection must stay on the same entry before its cover is read from SD.
 #define COVER_LOAD_DELAY 6
 
+// Size of the image buffer the caller must provide to coverart_init.
+#define COVER_BUF_SIZE   (COVER_W * COVER_H)
+
+// Sets the (COVER_BUF_SIZE bytes, 4-byte aligned) image buffer and clears the
+// state. Must be called before any other function.
+void coverart_init(uint8_t *pixbuf);
+
 // Forget the cached cover (call when the directory listing is rebuilt or the
 // feature is toggled off).
 void coverart_invalidate(void);

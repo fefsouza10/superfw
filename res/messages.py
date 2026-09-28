@@ -169,6 +169,9 @@ en_strings = [
   "MSG_DEF_RTCVAL":  "RTC time",
   "MSG_DEF_SPEED":   "RTC speed",
   "MSG_LOAD_GBA":    "Load GBA game ROM",
+  "MSG_SPATCH_ON":   "%s patch: on [SELECT]",
+  "MSG_SPATCH_OFF":  "%s patch: off [SELECT]",
+  "MSG_SPATCH_BAD":  "%s patch does not match ROM",
 
   "MSG_LOADINFO_GAME": "GameID: %s | Version: %d",
   "MSG_LOADINFO_SAVE": "Save type: %s (%s)",
@@ -223,6 +226,7 @@ en_strings = [
   "MSG_ERR_SETSAVE": "Error saving settings!",             # alertmsg
   "MSG_ERR_DELFILE": "Error deleting file!",               # alertmsg
   "MSG_ERR_READ":    "Error: could not load ROM!",         # alertmsg
+  "MSG_ERR_PATCH":   "Error: could not apply patch!",      # alertmsg
   "MSG_ERR_NOEMU":   "Can't find emulator!",               # alertmsg
   "MSG_ERR_TOOBIG":  "The GBA file is too big!",           # alertmsg
   "MSG_ERR_SAVERD":  "Error: can't read save file",        # alertmsg

@@ -42,6 +42,7 @@
 #include "sha256.h"
 #include "supercard_driver.h"
 #include "coverart.h"
+#include "softpatch.h"
 
 #include "res/icons.h"
 #include "res/logo.h"
@@ -250,7 +251,16 @@ typedef struct {
   bool use_dsaving;                   // Whether we use direct-saving mode
   bool ingame_menu_enabled;           // Enable the in-game menu.
   bool rtc_patch_enabled;             // Patch for RTC workarounds.
+  // IPS/UPS/BPS patch next to the ROM
+  t_softpatch spatch;
+  bool spatch_found;                  // A patch file exists
+  bool spatch_on;                     // Apply it while loading
 } t_load_gba_info;
+
+// ROM size once loaded (soft-patches might grow it).
+static uint32_t eff_romfs(const t_load_gba_info *info) {
+  return info->spatch_on ? MAX(info->romfs, info->spatch.tsize) : info->romfs;
+}
 
 typedef struct {
   // Save read/write policies and info
@@ -636,9 +646,9 @@ bool ingame_menu_avail_sdram(const t_load_gba_info *info) {
   const unsigned igm_reqsz = ROUND_UP2(ingame_menu_payload.menu_rsize + font_block_size() + spop.p.load.l.cheats_size, 1024);
 
   // If the ROM is too big, must use some hole to load the menu.
-  if (info->romfs > MAX_GBA_ROM_SIZE - igm_reqsz) {
+  if (eff_romfs(info) > MAX_GBA_ROM_SIZE - igm_reqsz) {
     // Discard holes that are too small, or not well formed.
-    if (!p || p->hole_size < igm_reqsz || p->hole_addr + p->hole_size > info->romfs)
+    if (!p || p->hole_size < igm_reqsz || p->hole_addr + p->hole_size > info->romfs || info->spatch_on)
       return false;   // Too big to fit the menu!
   }
 
@@ -665,8 +675,8 @@ bool dirsav_avail_sdram(const t_load_gba_info *info) {
   const t_patch *p = get_game_patch(info);
 
   // Check if there's enough space for it! (Placing it at the end).
-  if (info->romfs > MAX_GBA_ROM_SIZE - DIRSAVE_REQ_SPACE) {
-    if (!p || p->hole_size < DIRSAVE_REQ_SPACE || p->hole_addr + p->hole_size > info->romfs)
+  if (eff_romfs(info) > MAX_GBA_ROM_SIZE - DIRSAVE_REQ_SPACE) {
+    if (!p || p->hole_size < DIRSAVE_REQ_SPACE || p->hole_addr + p->hole_size > info->romfs || info->spatch_on)
       return false;   // Too big to fit!
   }
 
@@ -709,6 +719,10 @@ static bool prepare_gba_info(
   for (unsigned i = 0; i < 4; i++)
     info->gcode[i] = isascii(info->romh.gcode[i]) ? info->romh.gcode[i] : 0x1A;
   info->gcode[4] = 0;
+
+  // Soft-patches are only applied when loading to SDRAM.
+  info->spatch_found = load_sdram && softpatch_find(fn, fs, &info->spatch);
+  info->spatch_on = info->spatch_found && info->spatch.valid;
 
   // Look up patches, have them handy.
   uint8_t gamecode[5] = {
@@ -1677,12 +1691,12 @@ static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
     draw_central_text_ovf(romname, frame, SCREEN_WIDTH/2, 52, SCREEN_WIDTH - 20);
 
   npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_GAME], gcode, ver);
-  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 82, SCREEN_WIDTH - 20);
+  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 78, SCREEN_WIDTH - 20);
 
   if (save_type < 0)
-    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   else if (issf)
-    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   else {
     const char *stype[] = {
       msgs[lang_id][MSG_SAVETYPE_NONE],       // SaveTypeNone
@@ -1702,7 +1716,7 @@ static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
     };
 
     npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_SAVE], stype[save_type], ssize[save_type]);
-    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   }
 
   draw_box_full(frame, 20, 220, 132, 152, FG_COLOR, HI_COLOR);
@@ -1773,6 +1787,13 @@ void render_gba_load_popup(volatile uint8_t *frame) {
   case GbaLoadPopInfo:
     render_gbarom_info(frame, info->romfn, is_superfw(&info->romh), info->gcode,
                        info->romh.version, p ? p->save_mode : -1);
+    if (info->spatch_found) {
+      char tmp[64];
+      const char *ptn[] = { "", "IPS", "UPS", "BPS" };
+      npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][!info->spatch.valid ? MSG_SPATCH_BAD :
+                   info->spatch_on ? MSG_SPATCH_ON : MSG_SPATCH_OFF], ptn[info->spatch.type]);
+      draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 114, SCREEN_WIDTH - 20);
+    }
     draw_central_text(msgs[lang_id][MSG_LOAD_GBA], frame, 120, 134);
     break;
   case GbaLoadPopLoadS:
@@ -2472,6 +2493,17 @@ static void keypress_popup_loadgba(unsigned newkeys) {
   // Limit selector to its max value
   spop.selector %= maxsel;
 
+  // SELECT toggles the IPS/UPS/BPS patch.
+  if ((newkeys & KEY_BUTTSEL) && spop.submenu == GbaLoadPopInfo &&
+      spop.p.load.i.spatch_found && spop.p.load.i.spatch.valid) {
+    spop.p.load.i.spatch_on = !spop.p.load.i.spatch_on;
+    // A bigger ROM might not leave space for DirSav anymore.
+    if (!dirsav_avail_sdram(&spop.p.load.i) && spop.p.load.i.use_dsaving) {
+      spop.p.load.i.use_dsaving = false;
+      spop.p.load.l.sram_save_type = autosave_default ? SaveReboot : SaveDisable;
+    }
+  }
+
   if (newkeys & KEY_BUTTLEFT) {
     if (spop.submenu == GbaLoadPopLoadS) {
       if (spop.selector == GBALdSetCheats)
@@ -2646,10 +2678,11 @@ static void keypress_popup_loadgba(unsigned newkeys) {
         spop.p.load.i.ingame_menu_enabled,
         spop.p.load.i.rtc_patch_enabled ? &rtci : NULL,
         spop.p.load.l.use_cheats ? spop.p.load.l.cheats_size : 0,
+        spop.p.load.i.spatch_on ? &spop.p.load.i.spatch : NULL,
         loadrom_progress);
       if (err) {
         // Show any errors that might have happened!
-        spop.alert_msg = msgs[lang_id][MSG_ERR_READ];
+        spop.alert_msg = msgs[lang_id][err == ERR_LOAD_PATCH ? MSG_ERR_PATCH : MSG_ERR_READ];
         // TODO: We cannot (in many cases) continue since we trash the SDRAM!
       }
     }

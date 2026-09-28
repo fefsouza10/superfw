@@ -34,6 +34,7 @@
 #include "util.h"
 #include "flash_mgr.h"
 #include "flash.h"
+#include "softpatch.h"
 
 // Here we have the ROM loading routines.
 
@@ -218,16 +219,22 @@ unsigned load_gba_rom(
   bool ingame_menu,
   const t_rtc_info *rtcinfo,
   unsigned cheats,
+  const t_softpatch *spatch,
   progress_fn progress
 ) {
 
   bool use_rtc_patches = rtcinfo != NULL;
+  // A soft-patched ROM can grow, reserve space for the patched size.
+  const uint32_t tsize = spatch ? softpatch_target_size(spatch, fs) : 0;
+  if (spatch && !tsize)
+    return ERR_LOAD_PATCH;
+  const uint32_t esize = MAX(fs, tsize);
 
   // Determine how much ROM space we need for the IGM and DirSav payloads
   const unsigned igm_reqsz = ingame_menu_payload.menu_rsize + font_block_size();
   // Round it up, reserve ~1KB after the ROM for patches.
   // 32MiB games cannot generate patches beyond the end.
-  const unsigned romrsize = ROUND_UP2(fs, 1024) + (fs < MAX_GBA_ROM_SIZE ? 1024 : 0);
+  const unsigned romrsize = ROUND_UP2(esize, 1024) + (esize < MAX_GBA_ROM_SIZE ? 1024 : 0);
   // Required size for these payloads. We should always have enough, since menu checks it.
   const unsigned req_size = (ingame_menu ? igm_reqsz : 0) + (dsinfo ? DIRSAVE_REQ_SPACE : 0);
 
@@ -242,7 +249,8 @@ unsigned load_gba_rom(
   }
   else {
     // Cannot append it at the end, it's too big. Check if we have a hole.
-    if (!ptch || ptch->hole_size < req_size)
+    // Holes come from the unpatched ROM, so they are not used with soft-patches.
+    if (!ptch || ptch->hole_size < req_size || spatch)
       return ERR_NO_PAYLOAD_SPACE;
 
     ds_addr = ptch->hole_addr;
@@ -337,6 +345,12 @@ unsigned load_gba_rom(
 
   // Proceed to patch the ROM
   set_supercard_mode(MAPPED_SDRAM, true, false);
+
+  // Apply the IPS/UPS/BPS patch first, the other patches go on top of it.
+  if (spatch && softpatch_apply(spatch, fn, fs, tsize)) {
+    set_supercard_mode(MAPPED_SDRAM, true, true);
+    return ERR_LOAD_PATCH;
+  }
 
   // Load/Patch the DirectSave payload if necessary.
   if (dsinfo)

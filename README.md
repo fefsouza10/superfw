@@ -4,6 +4,133 @@ SuperFW
 
 An alternative firmware for Supercard GBA flash carts (and derivatives/clones)
 
+> **Este é um fork** do [SuperFW](https://github.com/davidgfnet/superfw) com
+> novidades pensadas para o SuperChis Prime num Game Boy Advance SP (build
+> `BOARD=chis`, que também serve para os outros cartuchos). Veja abaixo em
+> [português](#novidades-deste-fork-português) e em
+> [English](#whats-new-in-this-fork-english). O texto original do projeto vem
+> depois delas.
+
+Novidades deste fork (português)
+--------------------------------
+
+**Capas dos jogos no navegador**
+- Mostra a capa do jogo selecionado nas abas do SD, da NOR, de Recentes e de
+  Favoritos. A capa é achada pelo código do jogo (4 letras do cabeçalho da ROM).
+- Aceita duas pastas na raiz do SD, nesta ordem:
+  - `/COVERS/X/Y/CODIGO.bmp`: BMP de 8 bits com paleta própria (até 216 cores,
+    até 120x80). É o formato mais bonito e o mais rápido de carregar.
+  - `/IMGS/X/Y/CODIGO.bmp`: o pacote do EZ-Flash Omega (BMP de 16 bits, 120x80).
+    Pode ficar junto do `/COVERS`, cobrindo o que faltar nele (por exemplo, ROM
+    hacks).
+  - `X` e `Y` são a 1ª e a 2ª letras do código (Pokémon Emerald, BPEE, fica em
+    `/COVERS/B/P/BPEE.bmp`).
+- Tamanho escolhido na aba UI, na opção "Capas": Desativado, Pequena (60x40),
+  Média (90x60) ou Grande (120x80, o padrão).
+- As capas ficam num cache na SDRAM (40 capas) e as dos jogos vizinhos são
+  pré-carregadas quando a seleção fica parada, então aparecem na hora ao rolar a
+  lista.
+- O script `tools/covers/convert_covers.py` (Python + Pillow) monta a pasta
+  `COVERS`. Ele converte o pacote do EZ-Flash, uma pasta de PNGs ou baixa as
+  imagens do libretro-thumbnails:
+  `python3 tools/covers/convert_covers.py --libretro "Nintendo - Game Boy Advance.dat" --out SD/`
+
+**Navegação mais rápida e favoritos**
+- R+↓ pula para a próxima letra inicial, e R+↑ volta para a anterior (no SD e na
+  NOR).
+- L e R trocam de aba ao **soltar** o botão, e só quando não foram usados junto com
+  outro botão.
+- Start marca ou desmarca um favorito nas abas do SD, da NOR e de Recentes. Os
+  favoritos ganham uma aba própria e ficam em `/.superfw/favorites.txt`.
+- Toques rápidos nos botões não se perdem mais, nem durante o carregamento de uma
+  capa.
+
+**Suspender (sleep) no in-game menu**
+- O item "Suspender (L+R+Sel)" do in-game menu apaga a tela, desliga o som e põe o
+  GBA no modo de parada do BIOS. L+R+Select acorda e volta ao jogo. Funciona com
+  jogos carregados do SD e da NOR (testado por mais de 10 minutos, com
+  savestates). O LED do SP continua aceso, porque ele é ligado direto ao
+  interruptor.
+
+**Patches IPS, UPS e BPS na hora de carregar (soft-patching)**
+- Para jogar uma tradução ou um ROM hack sem alterar a ROM, basta colocar o patch
+  ao lado da ROM, com o mesmo nome: `Jogo.gba` + `Jogo.ips` (ou `.ups`, ou
+  `.bps`).
+- A tela de informações do jogo mostra "Patch IPS: ligado [SELECT]". O Select liga
+  e desliga o patch antes de carregar. Se o patch UPS ou BPS foi feito para outra
+  versão da ROM, a tela avisa e ele não é aplicado.
+- A ROM pode crescer com o patch, até 32 MB.
+- Só vale para jogos carregados do SD (não para a gravação na NOR). A detecção de
+  save e os patches da base de dados usam o cabeçalho da ROM original.
+- `tools/patch-demo/mkdemo.py` cria uma ROM de teste com um patch de cada tipo.
+
+**Correções**
+- A aba de configurações gerais podia travar o menu por causa de um bug do
+  GCC 13 (`-fipa-ra` no Thumb). O projeto agora compila com `-fno-ipa-ra`.
+
+O histórico completo das mudanças deste fork está em
+[`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).
+
+What's new in this fork (English)
+---------------------------------
+
+**Cover art in the browser**
+- Shows the cover of the selected game in the SD, NOR, Recent and Favorites tabs.
+  Covers are matched by the game code (the 4-letter code in the ROM header).
+- Two folders at the root of the SD card are searched, in this order:
+  - `/COVERS/X/Y/CODE.bmp`: 8-bit BMP with its own palette (up to 216 colors and
+    120x80). It looks best and loads fastest.
+  - `/IMGS/X/Y/CODE.bmp`: the EZ-Flash Omega pack (16-bit BMP, 120x80). It can
+    stay next to `/COVERS` to cover whatever is missing there, such as ROM hacks.
+  - `X` and `Y` are the 1st and 2nd letters of the code (Pokémon Emerald, BPEE,
+    goes in `/COVERS/B/P/BPEE.bmp`).
+- The size is picked in the UI tab, "Cover art" option: Disabled, Small (60x40),
+  Medium (90x60) or Large (120x80, the default).
+- Covers are cached in SDRAM (40 covers), and the neighbours of the selection are
+  preloaded while it stays still, so they show up instantly when scrolling.
+- `tools/covers/convert_covers.py` (Python + Pillow) builds the `COVERS` folder
+  from the EZ-Flash pack, from a folder of PNGs, or by downloading the
+  libretro-thumbnails images:
+  `python3 tools/covers/convert_covers.py --libretro "Nintendo - Game Boy Advance.dat" --out SD/`
+
+**Faster navigation and favorites**
+- R+Down jumps to the next initial letter, and R+Up goes back to the previous one
+  (SD and NOR).
+- L and R switch tabs on **release**, and only when they were not used together
+  with another button.
+- Start adds or removes a favorite in the SD, NOR and Recent tabs. Favorites get
+  their own tab and are stored in `/.superfw/favorites.txt`.
+- Quick button taps are no longer lost, even while a cover is loading.
+
+**Sleep from the in-game menu**
+- The "Sleep (L+R+Select)" in-game menu entry blanks the screen, mutes the sound
+  and puts the GBA in BIOS Stop mode. L+R+Select wakes it up and resumes the game.
+  It works with games loaded from SD and from NOR (tested for more than 10
+  minutes, with savestates). The SP LED stays on, because it is wired to the
+  power switch.
+
+**IPS, UPS and BPS soft-patching**
+- To play a translation or a ROM hack without modifying the ROM, put the patch
+  next to the ROM with the same name: `Game.gba` + `Game.ips` (or `.ups`, or
+  `.bps`).
+- The game info page shows "IPS patch: on [SELECT]". Select turns the patch on and
+  off before loading. If a UPS or BPS patch was made for a different ROM, the page
+  says so and the patch is not applied.
+- Patched ROMs can grow, up to 32MB.
+- Only for games loaded from the SD card (not for NOR flashing). Save type
+  detection and database patches use the original ROM header.
+- `tools/patch-demo/mkdemo.py` builds a test ROM with one patch of each kind.
+
+**Fixes**
+- The general settings tab could hang the menu because of a GCC 13 bug
+  (`-fipa-ra` in Thumb code). The project now builds with `-fno-ipa-ra`.
+
+The full change log of this fork (in Portuguese) is in
+[`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).
+
+Original README
+---------------
+
 This project aims to provide a more modern and better firmware for Supercard
 flash carts (which are still widely used and very cheaply available). The goal
 is to add many features only present in more expensive or sophisticated flash
@@ -143,7 +270,8 @@ constraints:
 
  - Maximum ROM size: 32MiB (Supercard's memory size)
  - File path and name limit: 255 utf-8 bytes (not exactly characters!)
- - Maximum number of files+dirs in a directory: 16384
+ - Maximum number of files+dirs in a directory: 15360 (16384 upstream; this
+   fork uses the difference for the cover cache)
 
 Licenses
 --------

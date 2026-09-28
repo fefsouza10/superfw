@@ -40,7 +40,7 @@ sudo apt-get install libmgba-dev dosfstools mtools
 gcc -O1 -o harness tools/emu/harness.c -lmgba
 make BOARD=chis EMU_HARNESS=1
 mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
-./harness superfw.gba sd.img roteiro.txt saida/   # roteiro: wait N / press R+D 3 / shot nome / trace KEYS
+./harness superfw.gba sd.img roteiro.txt saida/   # roteiro: wait N / press R+D 3 / shot nome / trace KEYS / dump nome BYTES
 ```
 
 ---
@@ -53,6 +53,9 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 | B | Navegação: pular por letra + favoritos | Validado no GBA SP (28/09) | 2 |
 | C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR) | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
+| E | Patches IPS/UPS/BPS ao carregar (soft-patching) | Pronto p/ teste no hardware (validado no emulador) | 5 |
+| F | README em português e inglês com as novidades | Pronto | 6 |
+| G | Busca por nome, papel de parede, tempo de jogo, carrossel | Planejado (pedido de 28/09) | 7 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -225,6 +228,41 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-28 — Patches IPS/UPS/BPS ao carregar e README bilíngue
+- **Soft-patching** (`src/softpatch.c`, novo): um patch com o mesmo nome da ROM
+  (`Jogo.ips`, `.ups` ou `.bps`, nessa ordem de busca) é achado ao abrir o popup do
+  jogo (`softpatch_find`, só para carregar do SD). A página de informações mostra
+  "Patch IPS: ligado [SELECT]"; o Select liga e desliga. UPS/BPS feitos para outra
+  ROM (tamanho de origem diferente) aparecem como "não é desta ROM" e não são
+  aplicados.
+- **Como aplica:** a ROM é carregada na SDRAM normalmente e o patch é aplicado no
+  lugar, com escrita de 16 bits (leitura-modificação-escrita nas pontas). O patch é
+  lido do SD em blocos de 1 KB, ligando a interface do SD só durante cada leitura
+  (ela esconde os 16 MB de cima da SDRAM). No BPS, o SourceRead não custa nada (o
+  byte já está no lugar); um SourceCopy de uma posição ainda não sobrescrita copia
+  da SDRAM e, se já foi sobrescrita, lê da ROM no SD. Para isso o FatFs ganhou o
+  fast seek (`FF_USE_FASTSEEK 1`, tabela de 64 entradas).
+- O tamanho final do IPS é calculado ao carregar (percorre os registros pulando os
+  dados), porque isso pode levar ~1 s em patches grandes. O `load_gba_rom` reserva
+  o espaço do IGM e do DirectSave depois do tamanho já com o patch, e não usa os
+  "buracos" da ROM quando há patch. Erro novo `ERR_LOAD_PATCH` / "Erro ao aplicar o
+  patch!".
+- O laço de escrita roda na IWRAM em ARM. No emulador, uma ROM de 16 MB com patch
+  UPS de 4,6 MB leva ~12 s a mais que sem patch (era ~25 s antes da otimização); o
+  BPS de 8,9 MB, ~12 s. IPS de 460 KB: ~2 s.
+- Verificado no emulador byte a byte (novo comando `dump` do harness) contra
+  aplicadores de referência em Python: os três patches da demo e os três patches
+  grandes (ROM de 16 MB crescendo para 20 MB, com cópias para trás no BPS).
+- **Demo:** `tools/patch-demo/` gera uma ROM homebrew (texto sobre fundo azul) e um
+  patch de cada tipo que troca o texto e a cor e cresce a ROM em 64 KB (a ROM mostra
+  "ROM MAIOR" se achar o bloco novo): `python3 tools/patch-demo/mkdemo.py saida/`.
+- **Limitações:** não vale para gravar na NOR; o tipo de save e os patches da base
+  vêm do cabeçalho original; não confere o CRC do patch (só o tamanho da ROM de
+  origem no UPS/BPS). A barra de progresso fica cheia enquanto o patch é aplicado.
+- **README:** seção nova no topo, em português e inglês, com todas as novidades do
+  fork, e o limite de arquivos por pasta corrigido para 15.360.
+- EWRAM `chis`: 93,5% (240.276 B). IWRAM 37%.
 
 ### 2026-09-28 — Tamanho de capa selecionável, pasta /COVERS e toques de botão
 - Pedido do teste da f142163: as capas voltam ao tamanho original e ganham uma opção

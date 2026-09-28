@@ -69,6 +69,8 @@
 .globl ingame_menu_palette
 .globl font_base_addr
 .globl savefile_backups
+.globl sleep_wake_keys
+.globl sleep_keys_name
 .globl cheat_base_addr
 .globl spill_addr
 .globl savefile_pattern
@@ -124,6 +126,8 @@ has_rtc_support:       .word 0x0    // Filled with a boolean to allow tweaking R
 menu_anim_speed:       .word 0x0    // Menu animation speed
 ingame_menu_palette:   .fill 8,2,0  // Filled with background, foreground and select colors
 savefile_backups:      .word 0x0    // Fill the number of backups to preserve.
+sleep_wake_keys:       .word 0x0    // Sleep mode wake up combo (KEYINPUT style mask)
+sleep_keys_name:       .fill 20, 1, 0           // Wake up combo name (NULL terminated)
 
 savefile_pattern:      .fill 256, 1, 0          // File name pattern (NULL terminated)
 savestate_pattern:     .fill 256, 1, 0          // File name pattern (NULL terminated)

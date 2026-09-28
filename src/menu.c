@@ -142,6 +142,8 @@ enum {
 enum {
   SettTitle1 = 0,
   SettHotkey,
+  SettSleepKeys,
+  SettAutoSleep,
   SettBootType,
   SettFastSD,
   #ifdef SUPPORT_NORGAMES
@@ -2079,6 +2081,19 @@ void render_settings(volatile uint8_t *frame) {
   }
 
   if (optnum++ >= baseopt && optcnt < maxrows) {
+    npf_snprintf(tmp, sizeof(tmp), "< %s >", hotkey_list[sleep_combo].cname);
+    draw_text_ovf(msgs[lang_id][MSG_SETT_SLEEPK], frame, 8, offy + rowh*optcnt, 224);
+    draw_central_text(tmp, frame, colx, offy + rowh*optcnt++);
+  }
+
+  if (optnum++ >= baseopt && optcnt < maxrows) {
+    if (autosleep_opt)
+      npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_AUTOSL_MIN], autosleep_mins[autosleep_opt]);
+    draw_text_ovf(msgs[lang_id][MSG_SETT_AUTOSL], frame, 8, offy + rowh*optcnt, 224);
+    draw_central_text(autosleep_opt ? tmp : msgs[lang_id][MSG_AUTOSL_NEVER], frame, colx, offy + rowh*optcnt++);
+  }
+
+  if (optnum++ >= baseopt && optcnt < maxrows) {
     draw_text_ovf(msgs[lang_id][MSG_SETT_BOOT], frame, 8, offy + rowh*optcnt, 224);
     draw_central_text(msgs[lang_id][MSG_BOOT_TYPE0 + boot_bios_splash], frame, colx, offy + rowh*optcnt++);
   }
@@ -2217,6 +2232,8 @@ void render_settings(volatile uint8_t *frame) {
                         smenu.set.selector == SettSaveBkp  ? MSG_BACKUP_I :
                         smenu.set.selector == SettFastSD   ? MSG_FASTSD_I :
                         smenu.set.selector == SettFastEWRAM? MSG_FASTEW_I :
+                        smenu.set.selector == SettSleepKeys? MSG_SLEEPK_I :
+                        smenu.set.selector == SettAutoSleep? MSG_AUTOSL_I :
                         smenu.set.selector == DefsPatchEng ? MSG_PATCH_TYPE_I0 + patcher_default :
                         smenu.set.selector == DefsLoadPol  ? MSG_DEF_LOADP_I0 + (autoload_default ^ 1) :
                         smenu.set.selector == DefsSavePol  ? MSG_DEF_SAVEP_I0 + (autosave_default ^ 1) :
@@ -3463,6 +3480,10 @@ static void keypress_menu_settings(unsigned newkeys) {
   if (newkeys & KEY_BUTTLEFT) {
     if (smenu.set.selector == SettHotkey)
       hotkey_combo = (hotkey_combo + hotkey_listcnt - 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettSleepKeys)
+      sleep_combo = (sleep_combo + hotkey_listcnt - 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettAutoSleep)
+      autosleep_opt = autosleep_opt ? autosleep_opt - 1 : 0;
     else if (smenu.set.selector == SettSaveLoc)
       save_path_default = (save_path_default + SaveDirCNT - 1) % SaveDirCNT;
     #ifdef SUPPORT_NORGAMES
@@ -3481,6 +3502,10 @@ static void keypress_menu_settings(unsigned newkeys) {
   if (newkeys & KEY_BUTTRIGHT) {
     if (smenu.set.selector == SettHotkey)
       hotkey_combo = (hotkey_combo + 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettSleepKeys)
+      sleep_combo = (sleep_combo + 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettAutoSleep)
+      autosleep_opt = MIN(AUTOSLEEP_CNT - 1, autosleep_opt + 1);
     else if (smenu.set.selector == SettSaveLoc)
       save_path_default = (save_path_default + 1) % SaveDirCNT;
     #ifdef SUPPORT_NORGAMES

@@ -74,6 +74,10 @@ extern uint8_t save_path_nor_default;
 extern uint8_t state_path_default;
 extern uint8_t backup_sram_default;
 extern uint8_t hotkey_combo;
+extern uint8_t sleep_combo;
+extern uint8_t autosleep_opt;
+#define AUTOSLEEP_CNT 5
+extern const uint8_t autosleep_mins[AUTOSLEEP_CNT];
 extern uint8_t enable_cheats;
 extern uint8_t autoload_default;
 extern uint8_t autosave_default;

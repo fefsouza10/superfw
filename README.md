@@ -45,12 +45,19 @@ Novidades deste fork (português)
 - Toques rápidos nos botões não se perdem mais, nem durante o carregamento de uma
   capa.
 
-**Suspender (sleep) no in-game menu**
-- O item "Suspender (L+R+Sel)" do in-game menu apaga a tela, desliga o som e põe o
-  GBA no modo de parada do BIOS. L+R+Select acorda e volta ao jogo. Funciona com
-  jogos carregados do SD e da NOR (testado por mais de 10 minutos, com
-  savestates). O LED do SP continua aceso, porque ele é ligado direto ao
-  interruptor.
+**Suspender (sleep) e economia de bateria**
+- O item "Suspender" do in-game menu apaga a tela, desliga o som e põe o GBA no
+  modo de parada do BIOS. A combinação de botões mostrada ao lado do item acorda e
+  volta ao jogo. Funciona com jogos carregados do SD e da NOR (testado por mais de
+  10 minutos, com savestates). O LED do SP continua aceso, porque ele é ligado
+  direto ao interruptor.
+- Na aba de configurações gerais:
+  - "Acordar com" escolhe a combinação que acorda o GBA (padrão L+R+Select).
+  - "Suspender no menu" suspende o GBA sozinho depois de 2, 5, 10 ou 15 minutos
+    parado no menu da SuperFW (padrão: Nunca). Acorda com a mesma combinação.
+- O menu agora deixa a CPU parada enquanto espera o próximo quadro da tela, em vez
+  de ficar consultando o vídeo sem parar. Isso gasta menos pilha sem mudar nada no
+  uso.
 
 **Patches IPS, UPS e BPS na hora de carregar (soft-patching)**
 - Para jogar uma tradução ou um ROM hack sem alterar a ROM, basta colocar o patch
@@ -64,7 +71,32 @@ Novidades deste fork (português)
   save e os patches da base de dados usam o cabeçalho da ROM original.
 - `tools/patch-demo/mkdemo.py` cria uma ROM de teste com um patch de cada tipo.
 
+**Busca por nome**
+- R+Start abre um teclado na tela, na aba do SD. A digita a letra escolhida, e a
+  tela mostra o primeiro arquivo ou pasta da pasta atual cujo nome contém o texto.
+  L/R passam para o resultado anterior ou o próximo, Start vai até ele e B fecha.
+
+**Player de vídeo (.gbv)**
+- Arquivos `.gbv` abrem num player próprio: tela cheia 240x160, som, e até
+  30 quadros por segundo. Cabem cerca de 20 a 25 minutos num arquivo (o limite é
+  31 MB, porque o vídeo é carregado na SDRAM do cartucho).
+- Botões: A ou Start pausa; ←/→ voltam ou avançam 10 s; L/R, 60 s; ↑/↓ mudam o
+  volume; Select fixa a barra de tempo na tela. B pausa, e B de novo sai para a
+  SuperFW.
+- O conversor `tools/video/gbvconv.py` roda no PC (Windows, Linux ou macOS) e
+  aceita qualquer vídeo que o ffmpeg lê (mkv, mp4, avi...). Ele mantém todos os
+  quadros do vídeo original e reduz a qualidade da imagem até o arquivo caber no
+  limite:
+  ```
+  pip install numpy pillow imageio-ffmpeg
+  python3 tools/video/gbvconv.py episodio.mkv      # gera episodio.gbv
+  ```
+  Um episódio de 20 minutos leva uns 5 minutos para converter.
+
 **Correções**
+- A tecla do in-game menu escolhida nas configurações voltava para L+R+Start
+  depois de reiniciar (a opção era gravada, mas não era lida). Agora ela é
+  mantida.
 - A aba de configurações gerais podia travar o menu por causa de um bug do
   GCC 13 (`-fipa-ra` no Thumb). O projeto agora compila com `-fno-ipa-ra`.
 
@@ -102,12 +134,18 @@ What's new in this fork (English)
   their own tab and are stored in `/.superfw/favorites.txt`.
 - Quick button taps are no longer lost, even while a cover is loading.
 
-**Sleep from the in-game menu**
-- The "Sleep (L+R+Select)" in-game menu entry blanks the screen, mutes the sound
-  and puts the GBA in BIOS Stop mode. L+R+Select wakes it up and resumes the game.
-  It works with games loaded from SD and from NOR (tested for more than 10
-  minutes, with savestates). The SP LED stays on, because it is wired to the
-  power switch.
+**Sleep and battery saving**
+- The "Sleep" in-game menu entry blanks the screen, mutes the sound and puts the
+  GBA in BIOS Stop mode. The button combo shown next to the entry wakes it up and
+  resumes the game. It works with games loaded from SD and from NOR (tested for
+  more than 10 minutes, with savestates). The SP LED stays on, because it is wired
+  to the power switch.
+- In the general settings tab:
+  - "Wake from sleep" picks the combo that wakes the GBA (default L+R+Select).
+  - "Menu auto sleep" puts the GBA to sleep after 2, 5, 10 or 15 idle minutes in
+    the SuperFW menu (default: Never). The same combo wakes it up.
+- The menu now halts the CPU while it waits for the next video frame, instead of
+  busy-polling the display. This saves battery without changing anything else.
 
 **IPS, UPS and BPS soft-patching**
 - To play a translation or a ROM hack without modifying the ROM, put the patch
@@ -121,7 +159,30 @@ What's new in this fork (English)
   detection and database patches use the original ROM header.
 - `tools/patch-demo/mkdemo.py` builds a test ROM with one patch of each kind.
 
+**Search by name**
+- R+Start opens an on-screen keyboard in the SD tab. A types the selected letter,
+  and the first file or folder in the current folder whose name contains the text
+  is shown. L/R go to the previous or next match, Start jumps to it and B closes
+  the keyboard.
+
+**Video player (.gbv)**
+- `.gbv` files open in a built-in player: full screen 240x160, sound, and up to
+  30 frames per second. About 20 to 25 minutes fit in one file (the limit is
+  31MB, because the video is loaded into the cart SDRAM).
+- Buttons: A or Start pauses; Left/Right seek 10s; L/R, 60s; Up/Down change the
+  volume; Select pins the time bar. B pauses, and B again exits to SuperFW.
+- The converter `tools/video/gbvconv.py` runs on a PC (Windows, Linux or macOS)
+  and takes any video ffmpeg can read (mkv, mp4, avi...). It keeps every frame of
+  the source and lowers the picture quality until the file fits:
+  ```
+  pip install numpy pillow imageio-ffmpeg
+  python3 tools/video/gbvconv.py episode.mkv      # writes episode.gbv
+  ```
+  A 20-minute episode takes about 5 minutes to convert.
+
 **Fixes**
+- The in-game menu hot-key picked in the settings went back to L+R+Start after a
+  reboot (it was saved but never read back). It is kept now.
 - The general settings tab could hang the menu because of a GCC 13 bug
   (`-fipa-ra` in Thumb code). The project now builds with `-fno-ipa-ra`.
 

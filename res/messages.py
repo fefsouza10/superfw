@@ -57,6 +57,10 @@ en_strings = [
   "MSG_SET_TITL2":   "Default GBA settings",
 
   "MSG_SETT_HOTK":   "Menu Hot-key",
+  "MSG_SETT_SLEEPK": "Wake from sleep",
+  "MSG_SETT_AUTOSL": "Menu auto sleep",
+  "MSG_AUTOSL_NEVER": "< Never >",
+  "MSG_AUTOSL_MIN":  "< %u min >",
   "MSG_SETT_BOOT":   "Game boot",
   "MSG_SETT_SAVET":  "Save path",
   "MSG_SETT_SAVEBK": "Save backup #",
@@ -120,6 +124,8 @@ en_strings = [
   "MSG_STATE_TYPE_PT": "Savestate files live in %s dir",
   "MSG_BACKUP_I":      "Keep the last N save files",
   "MSG_FASTSD_I":      "Use a fast ROM loading mechanism. Can result in crashes or incorrect reads in some devices",
+  "MSG_SLEEPK_I":      "Buttons that wake the console from sleep (in-game menu and menu auto sleep)",
+  "MSG_AUTOSL_I":      "Turns the screen off and sleeps after this idle time in the menu",
   "MSG_FASTEW_I":      "Overclock EWRAM for some extra performance. Not available on NDS or GBA Micro",
   "MSG_INGAME_I":      "Show menu on combo key press",
   "MSG_PATCHE_I":      "Run PatchEngine to generate patches for this ROM",
@@ -275,7 +281,7 @@ en_menu_strings = [
   "IMENU_MAIN3_SSTATE":     "Savestates",
   "IMENU_MAIN4_RTC":        "RTC clock",
   "IMENU_MAIN5_CHEATS":     "Cheats",
-  "IMENU_MAIN6_SLEEP":      "Sleep (L+R+Select)",
+  "IMENU_MAIN6_SLEEP":      "Sleep",
 
   "IMENU_GOBACK":           "Go back",
   "IMENU_UPDAT_RTC":        "Update RTC clock",

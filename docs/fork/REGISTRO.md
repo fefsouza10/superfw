@@ -51,11 +51,15 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 |---|--------------------------------------|--------------|------------|
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Cache validado; tamanho selecionável e /COVERS p/ teste | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Validado no GBA SP (28/09) | 2 |
-| C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR) | 3 |
+| C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR); combinação configurável e suspensão no menu prontos p/ teste | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
 | E | Patches IPS/UPS/BPS ao carregar (soft-patching) | Pronto p/ teste no hardware (validado no emulador) | 5 |
 | F | README em português e inglês com as novidades | Pronto | 6 |
-| G | Busca por nome, papel de parede, tempo de jogo, carrossel | Planejado (pedido de 28/09) | 7 |
+| G | Busca por nome | Pronto p/ teste no hardware | 7 |
+| H | Player de vídeo (.gbv) + conversor no PC | Pronto p/ teste no hardware (tempo real no emulador) | 8 |
+| I | Economia de bateria no menu (CPU parada no V-blank) | Pronto p/ teste no hardware | 9 |
+| J | EWRAM rápida por jogo + teste mais forte | Planejado (o overclock global dá bugs no SP do Felipe) | 10 |
+| K | Tempo de jogo, carrossel, papel de parede (por último) | Planejado | 11 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -228,6 +232,51 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-28 — Botões de acordar, suspensão automática no menu e correção da tecla do IGM
+
+- Configurações gerais ganharam "Acordar com" (`sleep_keys=` no `settings.txt`,
+  índice em `hotkey_list`, padrão 1 = L+R+Select) e "Suspender no menu"
+  (`menu_autosleep=`, Nunca/2/5/10/15 min).
+- O loader grava a máscara e o nome da combinação no cabeçalho do in-game menu
+  (`sleep_wake_keys` e `sleep_keys_name` em `src/ingame.S`, campos novos no fim de
+  `t_igmenu`). O item do IGM passou a ser "Suspender (combinação)".
+- Suspensão no menu (`src/main.c`, `check_autosleep`/`menu_sleep`): conta o tempo
+  sem botão apertado; tarefas longas (como gravar na NOR) contam como atividade.
+  Usa a mesma parada do BIOS (`swi 0x03`) com IRQ do teclado; ao acordar espera
+  soltar os botões e descarta os toques, para a combinação não chegar ao menu.
+- Correção de bug do upstream: `hotkey_opt` era gravado mas nunca lido, então a
+  tecla do IGM voltava para L+R+Start a cada boot. Agora está na tabela de
+  `parse_settings`.
+- Teste no emulador: as opções aparecem, são lidas do `settings.txt` e a
+  suspensão dispara no tempo certo. O mGBA ignora o `swi 0x03` (sem callback de
+  parada), então a parada em si só dá para ver no hardware; o código é o mesmo do
+  sleep do IGM já validado.
+- Arquivos: `src/settings.c/.h`, `src/menu.c`, `src/main.c`, `src/loader.c`,
+  `src/ingame.S`, `src/ingame.h`, `src/ingame_menu.c`, `res/messages.py`,
+  `res/lang/pt.json`, `res/lang/es.json`, `README.md`.
+
+### 2026-09-28 — Player de vídeo (.gbv)
+
+- Formato GBV1 (descrito no topo de `gbvplayer/player.c`): paleta de 256 cores por
+  trecho, blocos 8x8/4x4 (pula, cor única, duas cores, cru), áudio IMA ADPCM
+  4 bits e duração de cada quadro em V-blanks (23,976 fps toca em tempo real).
+- Player em `gbvplayer/` (roda da IWRAM, ROM de vídeo mapeada da SDRAM), embutido
+  como asset "GBVP" nos builds sd e chis. Os `.gbv` abrem como os emuladores
+  externos (`src/emu.c`, limite de 31 MB) e sem save.
+- Conversor `tools/video/gbvconv.py` (numpy, Pillow, imageio-ffmpeg): mantém todos
+  os quadros (até 30 fps) e ajusta a qualidade para caber no limite; refaz a
+  conversão se passar.
+- Teste no emulador: episódio sintético de 20 min virou 30,8 MB em 4 min 50 s de
+  conversão, e toca sem atraso (`late_vblanks` = 1), com busca de ±60 s.
+- Uso de EWRAM do build chis: ~94,9%.
+
+### 2026-09-28 — Busca por nome e CPU parada no menu
+
+- R+Start na aba do SD abre um teclado (`POPUP_SEARCH` em `src/menu.c`). A
+  digita, L/R passam de resultado, Start vai até ele.
+- O laço principal do menu usa `swi 0x02` (Halt) até o V-blank, em vez de
+  consultar o `DISPSTAT` sem parar (`wait_for_vblank_halt` em `src/main.c`).
 
 ### 2026-09-28 — Patches IPS/UPS/BPS ao carregar e README bilíngue
 - **Soft-patching** (`src/softpatch.c`, novo): um patch com o mesmo nome da ROM

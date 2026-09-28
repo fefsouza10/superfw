@@ -92,6 +92,9 @@ uint8_t state_path_default = StateSavestateDir;
 uint8_t backup_sram_default = 0;  // Number of older SRAM save to keep as backup
 
 uint8_t hotkey_combo = 0;  // Hotkey Combo number
+uint8_t sleep_combo = 1;   // Wake up combo for sleep mode (L+R+Select)
+uint8_t autosleep_opt = 0; // Menu auto sleep (index into autosleep_mins)
+const uint8_t autosleep_mins[AUTOSLEEP_CNT] = {0, 2, 5, 10, 15};
 uint8_t enable_cheats = 0; // By default cheats are disabled (it's slightly faster)
 
 uint8_t autoload_default = 1;
@@ -146,9 +149,11 @@ bool save_settings() {
     return false;
 
   // Serialize the settings
-  char buf[512];
+  char buf[640];
   npf_snprintf(buf, sizeof(buf),
     "hotkey_opt=%u\n"
+    "sleep_keys=%u\n"
+    "menu_autosleep=%u\n"
     "boot_to_bios=%u\n"
     "save_path_policy=%u\n"
     "save_path_nor_policy=%u\n"
@@ -166,7 +171,7 @@ bool save_settings() {
     "default_savegame=%u\n"
     "prefer_directsave=%u\n"
     "default_rtcts=%lu\n",
-    hotkey_combo, boot_bios_splash, save_path_default, save_path_nor_default,
+    hotkey_combo, sleep_combo, autosleep_opt, boot_bios_splash, save_path_default, save_path_nor_default,
     state_path_default, backup_sram_default, enable_cheats, use_slowld, use_fastew,
     use_verify_nor, (unsigned int)patcher_default, ingamemenu_default, rtcpatch_default,
     rtcspeed_default, autoload_default, autosave_default, autosave_prefer_ds,
@@ -216,6 +221,9 @@ static void parse_settings(void *usr, const char *var, const char *value) {
       { "sram_backup_count",    &backup_sram_default,   MAX_BACKUP_CNT + 1 },
       { "default_patcher",      &patcher_default,       PatchTotalCNT },
       { "default_rtctick",      &rtcspeed_default,      RTC_SPEED_CNT },
+      { "hotkey_opt",           &hotkey_combo,          hotkey_listcnt },
+      { "sleep_keys",           &sleep_combo,           hotkey_listcnt },
+      { "menu_autosleep",       &autosleep_opt,         AUTOSLEEP_CNT },
     };
     for (unsigned i = 0; i < sizeof(uintset)/sizeof(uintset[0]); i++)
       if (!strcmp(var, uintset[i].s)) {

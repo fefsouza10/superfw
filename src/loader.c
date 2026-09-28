@@ -153,6 +153,9 @@ void load_ingame_menu(
   igm->scratch_space_size = total_size - (menu_size + fontsz + cheats);
   igm->menu_has_rtc_support = rtc_patches;    // Using RTC patches
   igm->savefile_backups = backup_sram_default;// Backup count
+  igm->sleep_keys = hotkey_list[sleep_combo].mask;
+  memset(igm->sleep_keys_name, 0, sizeof(igm->sleep_keys_name));
+  strncpy(igm->sleep_keys_name, hotkey_list[sleep_combo].cname, sizeof(igm->sleep_keys_name) - 1);
   for (unsigned i = 0; i < sizeof(igm->menu_palette) / sizeof(igm->menu_palette[0]); i++)
     igm->menu_palette[i] = MEM_PALETTE[ING_PALETTE_BASE + i];
 

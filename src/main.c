@@ -149,6 +149,50 @@ void irq_handler_fn() {
       key_presses[i]++;
 }
 
+// Menu auto sleep: after some idle time, blank the screen and stop the CPU
+// until the wake up combo (same as the in-game menu sleep) is pressed.
+#define REG_KEYCNT_U16     (*((volatile uint16_t *) 0x04000132))
+#define IRQ_KEYPAD         0x1000
+
+static void menu_sleep() {
+  uint16_t dispcnt = REG_DISPCNT;
+  uint16_t wake = (~hotkey_list[sleep_combo].mask) & 0x3FF;
+
+  REG_DISPCNT = dispcnt | 0x80;         // Forced blank (LCD off)
+  REG_IME = 0;
+  REG_KEYCNT_U16 = 0xC000 | wake;       // IRQ when all keys are pressed
+  REG_IE = IRQ_KEYPAD;
+  REG_IF = 0xFFFF;
+  REG_IME = 1;
+
+  asm volatile ("swi 0x03" ::: "r0", "r1", "r2", "r3", "memory");
+
+  REG_IME = 0;
+  REG_KEYCNT_U16 = 0;
+  REG_IF = 0xFFFF;
+  REG_IE = 0x0001;
+  REG_IME = 1;
+
+  // Wait for the combo to be released and drop it, so it does not reach the menu.
+  while (REG_KEYINPUT != 0x3FF)
+    wait_for_vblank_halt();
+  for (unsigned i = 0; i < sizeof(key_presses); i++)
+    key_presses[i] = 0;
+  REG_DISPCNT = dispcnt;
+}
+
+static void check_autosleep() {
+  static unsigned last_active = 0, last_seen = 0;
+  // Long blocking tasks (ie. flashing a game) count as activity too.
+  if (REG_KEYINPUT != 0x3FF || !autosleep_opt || frame_count - last_seen > 30)
+    last_active = frame_count;
+  else if (frame_count - last_active >= autosleep_mins[autosleep_opt] * 60U * 60U) {
+    menu_sleep();
+    last_active = frame_count;
+  }
+  last_seen = frame_count;
+}
+
 uint32_t systime() {
   return (frame_count * 50) / 3;
 }
@@ -217,6 +261,8 @@ static int main_gba() {
     wait_for_vblank_halt();    // Avoid tearing (CPU halted meanwhile).
     menu_flip();
     prev_frame = cframe;
+
+    check_autosleep();
   }
 
   return 0;

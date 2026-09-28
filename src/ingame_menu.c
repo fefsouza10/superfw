@@ -45,6 +45,8 @@ extern uint32_t cheat_base_addr;
 extern uint32_t menu_anim_speed;
 extern uint16_t ingame_menu_palette[8];
 extern uint32_t savefile_backups;                // Num of save backups to create
+extern uint32_t sleep_wake_keys;                 // Wake up combo (KEYINPUT mask)
+extern char sleep_keys_name[];                   // Wake up combo name
 extern uint32_t scratch_base, scratch_size;      // Space to write snapshots (in memory)
 extern uint32_t spill_addr;                      // Spill buffer that gets reloaded on IGM exit
 extern char savefile_pattern[256];
@@ -606,7 +608,18 @@ void draw_main_menu(uint8_t *fb, unsigned framen) {
   draw_text(msgs[ingame_menu_lang][IMENU_MAIN3_SSTATE],     fb, 24, 36 + 17*3, !havess ? SH_COLOR : HI_COLOR);
   draw_text(msgs[ingame_menu_lang][IMENU_MAIN4_RTC],        fb, 24, 36 + 17*4, !has_rtc_support ? SH_COLOR : HI_COLOR);
   draw_text(msgs[ingame_menu_lang][IMENU_MAIN5_CHEATS],     fb, 24, 36 + 17*5, !cheat_base_addr ? SH_COLOR : HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN6_SLEEP],      fb, 24, 36 + 17*6, HI_COLOR);
+  {
+    char tmp[64];
+    const char *m = msgs[ingame_menu_lang][IMENU_MAIN6_SLEEP];
+    unsigned n = 0;
+    while (*m && n < 32)
+      tmp[n++] = *m++;
+    tmp[n++] = ' '; tmp[n++] = '(';
+    for (const char *k = sleep_keys_name; *k && n < 60; k++)
+      tmp[n++] = *k;
+    tmp[n++] = ')'; tmp[n] = 0;
+    draw_text_ovf(tmp, fb, 24, 36 + 17*6, 208, HI_COLOR);
+  }
 
   selbarpos = 36 + 17*copt;
 }
@@ -1059,11 +1072,11 @@ void rtckey(uint16_t keyp) {
   }
 }
 
-// Sleep mode: blank the screen and stop the CPU until L+R+Select is pressed,
+// Sleep mode: blank the screen and stop the CPU until the wake combo is pressed,
 // then go straight back to the game. Sound is already muted while in the menu
 // (SOUNDCNT_X is left alone, clearing it would reset the game's PSG registers).
 #define REG_KEYCNT_U16     (*((volatile uint16_t *) 0x04000132))
-#define SLEEP_WAKE_KEYS    (KEY_BUTTL | KEY_BUTTR | KEY_BUTTSEL)
+#define SLEEP_WAKE_KEYS    ((~sleep_wake_keys) & 0x3FF)
 #define IRQ_KEYPAD         0x1000
 
 static void wait_keys_released() {

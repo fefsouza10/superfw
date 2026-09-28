@@ -78,13 +78,26 @@ enum {
   POPUP_SAVFILE,               // Load/Store a SAV file
   POPUP_FWFLASH,               // Flash a new firmware image
   POPUP_FILE_MGR,              // Write ROM to flash, delete, hide/unhide...
+  POPUP_SEARCH,                // Search files by name (on-screen keyboard)
 #ifdef SUPPORT_NORGAMES
   POPUP_GBA_NORWRITE,          // Write a GBA ROM to NOR
   POPUP_GBA_NORLOAD,           // Launch a NOR game
 #endif
 };
 
+static uint32_t lr_mods = 0;        // See get_keypress()
+
+// L/R being used as modifiers for the keys returned by the last get_keypress().
+static inline uint32_t modifier_keys(void) {
+  return lr_mods;
+}
+
 #define BROWSER_ROWS                 8
+#define SEARCH_MAXLEN               16
+#define SEARCH_COLS                 10
+#define SEARCH_KEYS                 40
+// On-screen keyboard: '_' is a space and '<' deletes a character.
+static const char search_keys[SEARCH_KEYS + 1] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'_<";
 #define RECENT_ROWS                  9
 #define NORGAMES_ROWS                8
 
@@ -398,6 +411,13 @@ static struct {
       char fn[MAX_FN_LEN];
       unsigned fs;
     } pdb_ld;
+
+    // File search (SD browser)
+    struct {
+      char q[SEARCH_MAXLEN + 1];          // Query (upper case ASCII)
+      int match;                          // Current match (browser index) or -1
+      int count;                          // Number of matches
+    } search;
   } p;
 } spop;
 
@@ -1822,6 +1842,71 @@ void render_gba_load_popup(volatile uint8_t *frame) {
   }
 }
 
+// Case-insensitive (ASCII) substring match of the upper case query.
+static bool name_matches(const char *name, const char *q) {
+  for (; *name; name++) {
+    unsigned i = 0;
+    while (q[i]) {
+      char c = name[i];
+      if (c >= 'a' && c <= 'z')
+        c -= 'a' - 'A';
+      if (c != q[i])
+        break;
+      i++;
+    }
+    if (!q[i])
+      return true;
+  }
+  return false;
+}
+
+// Finds the next match starting at "from" in direction "dir" (wraps around).
+static int search_next(int from, int dir) {
+  const int cnt = smenu.browser.dispentries;
+  for (int i = 0; i < cnt; i++) {
+    int n = (from + dir * i + cnt * 2) % cnt;
+    if (name_matches(sdr_state->fileorder[n]->fname, spop.p.search.q))
+      return n;
+  }
+  return -1;
+}
+
+static void search_update(void) {
+  spop.p.search.count = 0;
+  spop.p.search.match = -1;
+  if (!spop.p.search.q[0])
+    return;
+  for (int i = 0; i < smenu.browser.dispentries; i++)
+    if (name_matches(sdr_state->fileorder[i]->fname, spop.p.search.q))
+      spop.p.search.count++;
+  spop.p.search.match = search_next(0, 1);
+}
+
+void render_search(volatile uint8_t *frame) {
+  char tmp[64];
+  draw_box_outline(frame, 2, 240-2, 18, 158, FG_COLOR);
+  npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_SEARCH_Q], spop.p.search.q);
+  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 22, SCREEN_WIDTH - 20);
+
+  const char *mt = msgs[lang_id][MSG_SEARCH_NONE];
+  if (spop.p.search.match >= 0)
+    mt = sdr_state->fileorder[spop.p.search.match]->fname;
+  if (spop.p.search.count > 1) {
+    npf_snprintf(tmp, sizeof(tmp), "(%d)", spop.p.search.count);
+    draw_rightj_text(tmp, frame, SCREEN_WIDTH - 8, 40);
+    draw_text_ovf(mt, frame, 8, 40, SCREEN_WIDTH - 20 - font_width(tmp));
+  } else
+    draw_central_text_ovf(mt, frame, SCREEN_WIDTH/2, 40, SCREEN_WIDTH - 16);
+
+  for (unsigned i = 0; i < SEARCH_KEYS; i++) {
+    unsigned x = 10 + (i % SEARCH_COLS) * 22, y = 60 + (i / SEARCH_COLS) * 19;
+    char k[2] = { search_keys[i], 0 };
+    draw_button_box(frame, x, x + 22, y, y + 19, spop.selector == i);
+    draw_central_text(k, frame, x + 11, y + 1);
+  }
+  draw_central_text_ovf(msgs[lang_id][MSG_SEARCH_HELP], frame, SCREEN_WIDTH/2, 138, SCREEN_WIDTH - 16);
+}
+
 void render_filemgr(volatile uint8_t *frame) {
   // Draw the file name and the options available
   draw_box_outline(frame, 2, 240-2, 18, 158, FG_COLOR);
@@ -2271,6 +2356,7 @@ static const struct {
   { render_sav_menu_popup, 1 },
   { render_fw_flash_popup, 1 },
   { render_filemgr,        1 },
+  { render_search,         1 },
   #ifdef SUPPORT_NORGAMES
   { render_gba_norwrite,   GbaNorWrCNT },
   { render_gba_norload,    GbaNorLoadCNT },
@@ -2973,6 +3059,47 @@ static void keypress_popup_norload(unsigned newkeys) {
 }
 #endif
 
+static void keypress_popup_search(unsigned newkeys) {
+  int sel = spop.selector;
+  if (newkeys & KEY_BUTTLEFT)
+    sel = (sel % SEARCH_COLS) ? sel - 1 : sel + SEARCH_COLS - 1;
+  if (newkeys & KEY_BUTTRIGHT)
+    sel = (sel % SEARCH_COLS == SEARCH_COLS - 1) ? sel - SEARCH_COLS + 1 : sel + 1;
+  if (newkeys & KEY_BUTTUP)
+    sel = (sel + SEARCH_KEYS - SEARCH_COLS) % SEARCH_KEYS;
+  if (newkeys & KEY_BUTTDOWN)
+    sel = (sel + SEARCH_COLS) % SEARCH_KEYS;
+  spop.selector = sel;
+
+  char *q = spop.p.search.q;
+  unsigned ql = strlen(q);
+  if (newkeys & KEY_BUTTA) {
+    char k = search_keys[sel];
+    if (k == '<') {
+      if (ql)
+        q[ql - 1] = 0;
+    }
+    else if (ql < SEARCH_MAXLEN) {
+      q[ql] = (k == '_') ? ' ' : k;
+      q[ql + 1] = 0;
+    }
+    search_update();
+  }
+  // L/R move between matches, Start jumps to the current one.
+  if (spop.p.search.match >= 0) {
+    if (newkeys & KEY_BUTTL)
+      spop.p.search.match = search_next(spop.p.search.match - 1, -1);
+    if (newkeys & KEY_BUTTR)
+      spop.p.search.match = search_next(spop.p.search.match + 1, 1);
+    if (newkeys & KEY_BUTTSTA) {
+      int m = spop.p.search.match;
+      smenu.browser.selector = m;
+      smenu.browser.seloff = MAX(0, MIN(m, smenu.browser.dispentries - BROWSER_ROWS));
+      spop.pop_num = POPUP_NONE;
+    }
+  }
+}
+
 static void keypress_popup_filemgr(unsigned newkeys) {
   if (newkeys & KEY_BUTTUP)
     spop.selector = MAX(0, spop.selector - 1);
@@ -3183,7 +3310,7 @@ static int prev_initial(int cur, int cnt, unsigned (*initial)(int)) {
 // Handles R+Down / R+Up (jump to the next / previous initial letter). Returns
 // true if the keys were consumed.
 static bool letter_jump(unsigned newkeys, int *selector, int cnt, unsigned (*initial)(int)) {
-  if (!(curr_pressed_keys() & KEY_BUTTR) || !(newkeys & (KEY_BUTTUP | KEY_BUTTDOWN)))
+  if (!(modifier_keys() & KEY_BUTTR) || !(newkeys & (KEY_BUTTUP | KEY_BUTTDOWN)))
     return false;
   if (newkeys & KEY_BUTTDOWN)
     *selector = next_initial(*selector, cnt, initial);
@@ -3209,7 +3336,13 @@ static void keypress_menu_browse(unsigned newkeys) {
       smenu.browser.selector = MIN(smenu.browser.dispentries - 1, smenu.browser.selector + BROWSER_ROWS);
       smenu.browser.seloff   = MIN(smenu.browser.dispentries - 1, smenu.browser.seloff   + BROWSER_ROWS);
     }
-    if (newkeys & KEY_BUTTSTA) {
+    if ((newkeys & KEY_BUTTSTA) && (modifier_keys() & KEY_BUTTR)) {
+      // R+Start opens the file search (keeps the last query).
+      spop.pop_num = POPUP_SEARCH;
+      spop.anim = 0;
+      search_update();
+    }
+    else if (newkeys & KEY_BUTTSTA) {
       // Start marks/unmarks the selected file as a favorite.
       t_centry *e = sdr_state->fileorder[smenu.browser.selector];
       if (!e->isdir) {
@@ -3599,6 +3732,7 @@ void menu_keypress(unsigned newkeys) {
         keypress_popup_savefile,
         keypress_popup_flash,
         keypress_popup_filemgr,
+        keypress_popup_search,
         #ifdef SUPPORT_NORGAMES
         keypress_popup_norwrite,
         keypress_popup_norload,
@@ -3679,6 +3813,9 @@ uint16_t get_keypress() {
       lr_combo = true;
   }
   mkeys &= ~lrmask;
+  // L/R held at any point since the last call (a quick R+Start tap can be
+  // fully released by the time it is processed).
+  lr_mods = lr_held | (ckeys & lrmask);
   if (!(ckeys & lrmask) && lr_held) {
     if (!lr_combo)
       mkeys |= lr_held;

@@ -233,6 +233,19 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Conversor com progresso animado e README com inglês primeiro
+
+- `tools/video/gbvconv.py` virou o "Video-to-GBA Converter by fefsouza10": banner
+  com o nome, resumo do vídeo (duração, fps, áudio, limite) e progresso ao vivo
+  com um Game Boy Advance em ASCII animado (boneco correndo até a bandeira conforme
+  o progresso, estrelas e chão rolando, LED piscando), barra, tempo convertido,
+  MB, quadros, velocidade e tempo restante. A animação roda numa thread, então
+  continua durante a leitura do áudio. Sem terminal (saída redirecionada), imprime
+  uma linha a cada 5%. Todas as mensagens em inglês; erros claros para arquivo
+  inexistente, vídeo ilegível e ffmpeg ausente. Ctrl+C cancela sem traceback.
+- README reorganizado: inglês primeiro (novidades + documentação original) e
+  depois o português completo, incluindo a tradução da documentação original.
+
 ### 2026-09-28 — Botões de acordar, suspensão automática no menu e correção da tecla do IGM
 
 - Configurações gerais ganharam "Acordar com" (`sleep_keys=` no `settings.txt`,

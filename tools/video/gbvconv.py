@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Converts a video (anything ffmpeg can read) to the SuperFW .gbv format.
 #
-#   python3 gbvconv.py episodio.mkv                # -> episodio.gbv (<= 31 MB)
-#   python3 gbvconv.py filme.mp4 -o filme.gbv --max-mb 31 --res 240x160
+#   python3 gbvconv.py episode.mkv                 # -> episode.gbv (<= 31 MB)
+#   python3 gbvconv.py movie.mp4 -o movie.gbv --max-mb 31 --res 240x160
 #
 # Needs Python 3 with numpy and Pillow, plus ffmpeg (in the PATH, or the
 # imageio-ffmpeg package): pip install numpy pillow imageio-ffmpeg
@@ -11,7 +11,7 @@
 # adapts so the file fits in the size limit. See gbvplayer/player.c for the
 # format description.
 
-import argparse, json, math, os, re, struct, subprocess, sys, time
+import argparse, json, math, os, re, shutil, struct, subprocess, sys, threading, time
 import numpy as np
 from PIL import Image
 
@@ -28,7 +28,8 @@ def ffmpeg_exe():
 
 def probe(ff, fn):
   # Parses "ffmpeg -i" output: duration, fps, audio presence.
-  out = subprocess.run([ff, "-hide_banner", "-i", fn], capture_output=True, text=True).stderr
+  out = subprocess.run([ff, "-hide_banner", "-i", fn], capture_output=True, text=True,
+                       errors="replace").stderr
   m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", out)
   dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 0
   fps = 24000 / 1001
@@ -38,6 +39,150 @@ def probe(ff, fn):
   if abs(fps - 23.98) < 0.01: fps = 24000 / 1001
   if abs(fps - 29.97) < 0.01: fps = 30000 / 1001
   return dur, fps, ("Audio:" in out)
+
+# ------------------------------------------------------------- Terminal ---
+# Live progress with an animated Game Boy Advance. Falls back to plain lines
+# when the output is not a terminal (ie. redirected to a file).
+
+APP_NAME = "Video-to-GBA Converter by fefsouza10"
+
+GBA_ART = [
+  r"     _________________________________________________",
+  "    /  [ L ]                                   [ R ]  \\",
+  "   /          .-----------------------------.          \\",
+  r"  |     _     |{0}|           |",
+  r"  |   _| |_   |{1}|     (B)   |",
+  r"  |  |_   _|  |{2}|  (A)      |",
+  r"  |    |_|    |{3}|           |",
+  r"  |           |{4}|   : : :   |",
+  r"  |  {L} POWER  '-----------------------------'   : : :   |",
+  "   \\              GAME BOY ADVANCE                     /",
+  "    \\          (SELECT)  (START)                      /",
+  r"     '-----------------------------------------------'",
+]
+SCREEN_W = 29
+RUNNER = [
+  [" o ", "/|\\", "/ \\"],
+  [" o ", "\\|/", " | "],
+  [" o/", "/| ", "/ \\"],
+  ["\\o ", " |\\", "/ \\"],
+]
+
+def fmt_time(t):
+  t = int(max(0, t))
+  return "%d:%02d:%02d" % (t // 3600, t // 60 % 60, t % 60) if t >= 3600 else "%d:%02d" % (t // 60, t % 60)
+
+class Ui:
+  def __init__(self):
+    self.tty = sys.stdout.isatty()
+    if self.tty and os.name == "nt":
+      os.system("")        # Enables ANSI escape codes on the Windows console
+    self.state = {"stage": "Starting", "progress": 0.0, "info": ""}
+    self.lines = 0
+    self.tick = 0
+    self.t0 = time.time()
+    self.last_plain = -1
+    self.lock = threading.Lock()
+    self.stop = threading.Event()
+    self.thread = None
+
+  def banner(self):
+    title = "  " + APP_NAME
+    print()
+    print("  " + "=" * len(APP_NAME))
+    print(title)
+    print("  " + "=" * len(APP_NAME))
+    print("  Turns any video into a .gbv file for the SuperFW video player.")
+    print()
+
+  def info(self, *rows):
+    for k, v in rows:
+      print("  %-12s %s" % (k + ":", v))
+    print()
+
+  def screen(self, progress):
+    rows = []
+    # Row 0: scrolling star field
+    stars = "  .     *        .    +     .      *   " * 2
+    off = self.tick % 39
+    rows.append(stars[off:off + SCREEN_W])
+    # Rows 1-3: runner heading to the flag; its position is the progress
+    x = int(progress * (SCREEN_W - 7))
+    spr = RUNNER[(self.tick // 2) % len(RUNNER)] if progress < 1 else [r"\o/", " | ", "/ \\"]
+    flag = ["|>", "| ", "| "]
+    for i in range(3):
+      line = " " * x + spr[i]
+      line = line.ljust(SCREEN_W - 3) + flag[i] + " "
+      rows.append(line[:SCREEN_W])
+    # Row 4: moving ground
+    ground = "_-__-___-_-__" * 4
+    g = ground[self.tick % 13:][:SCREEN_W]
+    rows.append(g)
+    return rows
+
+  def render(self):
+    with self.lock:
+      st = dict(self.state)
+    p = min(1.0, max(0.0, st["progress"]))
+    led = "*" if (self.tick // 4) % 2 == 0 else "o"
+    art = [l.replace("{L}", led) for l in GBA_ART]
+    scr = self.screen(p)
+    out = []
+    for l in art:
+      for i in range(5):
+        l = l.replace("{%d}" % i, scr[i])
+      out.append(l)
+    barw = 40
+    fill = int(p * barw)
+    spin = "|/-\\"[self.tick % 4]
+    out.append("")
+    out.append("  %s %-44s" % (spin if p < 1 else " ", st["stage"]))
+    out.append("  [%s%s] %5.1f%%" % ("#" * fill, "." * (barw - fill), 100 * p))
+    out.append("  %-66s" % st["info"])
+    return out
+
+  def draw(self):
+    lines = self.render()
+    buf = ""
+    if self.lines:
+      buf += "\x1b[%dF" % self.lines
+    buf += "\n".join(l + "\x1b[K" for l in lines) + "\n"
+    sys.stdout.write(buf)
+    sys.stdout.flush()
+    self.lines = len(lines)
+    self.tick += 1
+
+  def _loop(self):
+    while not self.stop.wait(0.12):
+      self.draw()
+
+  def start(self):
+    if self.tty:
+      self.draw()
+      self.thread = threading.Thread(target=self._loop, daemon=True)
+      self.thread.start()
+
+  def update(self, **kw):
+    with self.lock:
+      self.state.update(kw)
+    if not self.tty:
+      step = int(self.state["progress"] * 20)
+      if step != self.last_plain or "stage" in kw:
+        self.last_plain = step
+        print("  %-28s %5.1f%%  %s" % (self.state["stage"], 100 * self.state["progress"],
+              self.state["info"]), flush=True)
+
+  def finish(self):
+    if self.thread:
+      self.stop.set()
+      self.thread.join()
+      self.draw()
+    print()
+
+  def fail(self, msg):
+    self.finish()
+    print("  ERROR: " + msg)
+    sys.exit(1)
 
 # ---------------------------------------------------------------- Audio ---
 
@@ -235,10 +380,10 @@ def read_audio(ff, fn, rate):
                       "-f", "s16le", "-"], capture_output=True)
   return np.frombuffer(p.stdout, np.int16)
 
-def encode(args, budget_scale):
+def encode(args, budget_scale, ui, attempt, media):
   ff = ffmpeg_exe()
   w, h = map(int, args.res.split("x"))
-  duration, fps, has_audio = probe(ff, args.input)
+  duration, fps, has_audio = media
   fps_out = None
   if fps > args.max_fps + 0.01:
     fps_out, fps = args.max_fps, args.max_fps
@@ -250,11 +395,12 @@ def encode(args, budget_scale):
   nframes_est = max(1, duration * fps)
   video_budget = (max_bytes - audio_bytes - nframes_est * 12 - 600 * 520) * budget_scale
   per_vblank = max(50.0, video_budget / max(1, total_vb))
-  if args.verbose:
-    print("duration %.1fs, %.3f fps, audio %s, video budget %.0f B/s" %
-          (duration, fps, "yes" if spv else "no", per_vblank * VBLANK_HZ))
-
+  passtxt = "" if attempt == 0 else " (pass %d)" % (attempt + 1)
+  if spv:
+    ui.update(stage="Reading audio" + passtxt, progress=0.0, info="")
   samples = read_audio(ff, args.input, spv * VBLANK_HZ) if spv else None
+  ui.update(stage="Converting" + passtxt, progress=0.0,
+            info="video budget %.1f KB/s" % (per_vblank * VBLANK_HZ / 1024))
   aenc = AdpcmEncoder()
   venc = VideoEncoder(w, h)
 
@@ -342,10 +488,15 @@ def encode(args, budget_scale):
     last_src = rgb5
     vb_time = t_end
     gop_len += 1
-    if args.verbose and frame_no % 500 == 0:
+    if frame_no % 8 == 0:
       el = time.time() - t0
-      print("  %5.1f%%  %d frames, %.1f MB, %.1f s" % (100 * t_start / max(1, total_vb), frames_out,
-            len(out) / 1048576, el), flush=True)
+      prog = t_end / max(1, total_vb)
+      eta = el / prog - el if prog > 0.01 else 0
+      speed = (t_end / VBLANK_HZ) / max(0.001, el)
+      ui.update(progress=prog,
+                info="%s / %s  |  %.1f MB  |  %d frames  |  %.1fx  |  ETA %s" % (
+                  fmt_time(t_end / VBLANK_HZ), fmt_time(duration), len(out) / 1048576,
+                  frames_out, speed, fmt_time(eta) if prog > 0.01 else "--:--"))
 
   if pending:
     flush()
@@ -359,32 +510,69 @@ def encode(args, budget_scale):
   return bytes(out), max_bytes
 
 def main():
-  ap = argparse.ArgumentParser(description="Converts videos for the SuperFW video player")
-  ap.add_argument("input")
-  ap.add_argument("-o", "--output")
+  ap = argparse.ArgumentParser(description=APP_NAME + ": converts videos to .gbv files "
+                               "for the SuperFW video player")
+  ap.add_argument("input", help="Video file (anything ffmpeg can read: mkv, mp4, avi...)")
+  ap.add_argument("-o", "--output", help="Output .gbv file (default: next to the input)")
   ap.add_argument("--max-mb", type=float, default=31.5, help="Size limit (default 31.5 MB)")
   ap.add_argument("--res", default="240x160", help="240x160 (default) or 120x80 (scaled up)")
   ap.add_argument("--max-fps", type=float, default=30, help="Frame rate cap (default 30)")
   ap.add_argument("--spv", type=int, default=176, choices=[176, 264, 304],
                   help="Audio samples per frame: 176 (10.5 kHz), 264 (15.8 kHz), 304 (18.2 kHz)")
-  ap.add_argument("--no-audio", action="store_true")
+  ap.add_argument("--no-audio", action="store_true", help="Drop the sound track")
   ap.add_argument("--gop", type=float, default=10, help="Seconds between keyframes (seek points)")
   ap.add_argument("--scene", type=float, default=28, help="Scene cut threshold")
   ap.add_argument("--still", type=float, default=0.3, help="Merge source frames that change less than this")
-  ap.add_argument("-v", "--verbose", action="store_true")
   args = ap.parse_args()
   if not args.output:
     args.output = os.path.splitext(args.input)[0] + ".gbv"
 
+  ui = Ui()
+  ui.banner()
+  if not os.path.isfile(args.input):
+    print("  ERROR: file not found: %s" % args.input)
+    sys.exit(1)
+  ff = ffmpeg_exe()
+  if ff == "ffmpeg" and not shutil.which("ffmpeg"):
+    print("  ERROR: ffmpeg was not found. Install it with: pip install imageio-ffmpeg")
+    sys.exit(1)
+  media = probe(ff, args.input)
+  duration, fps, has_audio = media
+  if duration <= 0:
+    print("  ERROR: could not read the video (is it a valid video file?)")
+    sys.exit(1)
+  shown_fps = min(fps, args.max_fps)
+  ui.info(("Input", args.input), ("Output", args.output),
+          ("Duration", fmt_time(duration)),
+          ("Video", "%s @ %.3f fps%s" % (args.res, shown_fps,
+                    " (capped from %.3f)" % fps if fps > args.max_fps + 0.01 else "")),
+          ("Audio", ("%.1f kHz mono ADPCM" % (args.spv * VBLANK_HZ / 1000))
+                    if has_audio and not args.no_audio else "none"),
+          ("Size limit", "%.1f MB" % args.max_mb))
+
+  t0 = time.time()
+  ui.start()
   scale = 1.0
-  for attempt in range(4):
-    data, maxb = encode(args, scale)
-    print("%s: %.2f MB (limite %.2f MB)" % (args.output, len(data) / 1048576, maxb / 1048576))
-    if len(data) <= maxb:
-      break
-    scale *= maxb / len(data) * 0.97
-    print("Too big, encoding again with a smaller budget...")
+  try:
+    for attempt in range(4):
+      data, maxb = encode(args, scale, ui, attempt, media)
+      if len(data) <= maxb:
+        break
+      scale *= maxb / len(data) * 0.97
+      ui.update(stage="Too big (%.1f MB), retrying with less quality" % (len(data) / 1048576),
+                progress=0.0)
+    ui.update(stage="Done!", progress=1.0, info="")
+  except KeyboardInterrupt:
+    ui.fail("cancelled by the user.")
+  ui.finish()
   open(args.output, "wb").write(data)
+
+  nframes = struct.unpack_from("<I", data, 12)[0]
+  print("  Saved %s" % args.output)
+  print("  %.2f MB (limit %.2f MB), %d frames, converted in %s." % (
+        len(data) / 1048576, maxb / 1048576, nframes, fmt_time(time.time() - t0)))
+  print("  Copy it to the SD card and open it from SuperFW. Enjoy the show!")
+  print()
 
 if __name__ == "__main__":
   main()

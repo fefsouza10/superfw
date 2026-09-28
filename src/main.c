@@ -45,6 +45,16 @@ static void wait_for_vblank() {
   while (!(REG_DISPSTAT & DISPSTAT_VBLANK));
 }
 
+extern volatile unsigned frame_count;
+
+// Same as wait_for_vblank(), but halts the CPU while waiting (saves battery).
+// Needs the V-blank IRQ to be enabled.
+static void wait_for_vblank_halt() {
+  unsigned f = frame_count;
+  while (!(REG_DISPSTAT & DISPSTAT_VBLANK) && f == frame_count)
+    asm volatile ("swi 0x02" ::: "r0", "r1", "r2", "r3", "memory");
+}
+
 void setup_video() {
   // Stop screen, clear VRAM and palette RAM.
   REG_DISPCNT = 0x80;
@@ -204,7 +214,7 @@ static int main_gba() {
     unsigned cframe = frame_count;
     menu_render(frame_count - prev_frame);
 
-    wait_for_vblank();    // Avoid tearing.
+    wait_for_vblank_halt();    // Avoid tearing (CPU halted meanwhile).
     menu_flip();
     prev_frame = cframe;
   }

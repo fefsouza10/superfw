@@ -9,6 +9,7 @@ trabalho, antes de ela terminar.**
   padrão `BOARD=chis`, sem nenhuma adaptação.
 - Base do fork: `master` em `2a30933` ("Update README", v0.21, 24/09/2026).
 - Branch de trabalho atual: `claude/project-thread-3djlx9`.
+- Roteiro de testes no hardware: [`docs/fork/TESTES.md`](TESTES.md).
 
 ---
 

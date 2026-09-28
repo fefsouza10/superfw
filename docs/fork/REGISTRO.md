@@ -254,7 +254,7 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   15 bits por vez, então uma capa de 24 bits seria convertida para o mesmo cubo
   fixo das de 16 bits. Ficaria igual e mais lenta (arquivo de 28,8 KB). O ganho
   real vem da paleta própria (8 bits, via conversor).
-- EWRAM `chis`: 91,1% (234.136 B).
+- EWRAM `chis`: 91,1% (234.136 B). Build para teste: `superfw-chis-91feaa5.fw`.
 
 ### 2026-09-28 — Capas maiores (76x50) e em alta qualidade
 - Resultado do teste da a504000: tudo OK. Sleep de mais de 10 min com jogo da NOR

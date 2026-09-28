@@ -34,8 +34,8 @@ typedef struct {
 } t_rentry;
 _Static_assert (sizeof(t_rentry) % 4 == 0, "t_rentry must be word-friendly");
 
-// Flush recent entries to disk
-bool recent_flush(const t_rentry *rentries, unsigned rcount);
+// Flush recent (or favorite) entries to the given file
+bool recent_flush(const char *fpath, const t_rentry *rentries, unsigned rcount);
 
 // Inserts a filename to the recently played games (or re-orders the list)
 unsigned insert_recent_fn(t_rentry *rentries, unsigned rcount, const char *fn, unsigned flags);

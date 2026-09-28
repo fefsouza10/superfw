@@ -35,7 +35,7 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 | # | Funcionalidade                       | Estado       | Prioridade |
 |---|--------------------------------------|--------------|------------|
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
-| B | Navegação: pular por letra + favoritos | Planejado  | 2 |
+| B | Navegação: pular por letra + favoritos | Pronto p/ teste no hardware | 2 |
 | C | Modo suspender (sleep) no in-game menu | Planejado  | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Planejado | 4 |
 
@@ -200,6 +200,36 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-28 — Navegação (funcionalidade B)
+- **Pular por letra:** no navegador do SD e no da NOR, o **Start** leva à primeira
+  entrada com uma inicial diferente da atual, voltando ao topo no fim da lista
+  (`next_initial()`, `src/menu.c`). No SD usa o `sortname`, que já vem em minúsculas
+  e com acentos transliterados. O seletor de letra A–Z planejado virou esse pulo
+  sequencial, que ocupa bem menos código numa EWRAM apertada.
+- **Favoritos:**
+  - Aba nova `MENUTAB_FAVORITES`, logo depois de Recentes, com ícone de estrela
+    (`res/icons.png`, `ICON_FAVORITES` em `res/iconcv.py`, `src/res/icons.h`
+    regenerado). A aba só aparece quando há favoritos.
+  - Gravados em `/.superfw/favorites.txt` (`FAVORITES_FILEPATH`, `src/config.h`), no
+    mesmo formato do `recent.txt`. `recent_flush()` agora recebe o caminho do arquivo
+    (`src/recent.c/.h`).
+  - Recentes e Favoritos usam o mesmo código de lista (`t_rlist`, `render_rlist()`,
+    `keypress_rlist()`). Até 200 entradas, em `sdr_state->favorites` (SDRAM).
+  - Como marcar: no navegador do SD, Select → "Adicionar/Remover dos favoritos"
+    (`FiMgrFavorite`; os botões desse popup passaram de 30 para 24 px de espaçamento).
+    Na aba Recentes, o **Start** marca ou desmarca o jogo, o que serve também para
+    jogos da NOR. Na aba Favoritos, o **Select** remove, com confirmação.
+  - A barra de abas mostra só as abas visíveis, e L/R pulam as que estão escondidas
+    (`tab_visible()`, `tab_step()`).
+  - Textos novos `MSG_FMGR_FAVADD/FAVDEL`, `MSG_Q6_DELFAV` e `MSG_OK_FAVADD/FAVDEL`,
+    com tradução em pt/es. `tools/lang-checker.py` confirmou que tudo cabe nos popups.
+- Verificação: `sd`, `lite` e `chis` compilam sem warnings novos. A EWRAM do `chis`
+  foi para 96,8% (248.840 B).
+- **Falta**: testar no GBA SP. `res/icons.xcf` não foi atualizado com a estrela; o
+  PNG é a fonte usada pelo `iconcv.py`.
+- **Para depois**: favoritar direto do navegador da NOR. Hoje o Select de lá só
+  apaga, então o caminho é pela aba Recentes.
+
 ### 2026-09-28 — Capas (funcionalidade A)
 - **Commit `7a210ce`**: o PR davidgfnet/superfw#69 foi portado com cherry-pick, mantendo
   o autor original (mikermak). Os conflitos em `Makefile` (entrada `src/recent.c` nova
@@ -247,5 +277,6 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   precisa ser enxuto.
 - Espaço do firmware principal (`chis`): EWRAM ~96% usada após as capas. Vale
   medir a cada funcionalidade (`--print-memory-usage` no log do make).
-- Nos navegadores, L/R trocam de aba, Select abre o gerenciador de arquivos,
-  ←/→ pulam uma página e Start está livre.
+- Botões nos navegadores: L/R trocam de aba, Select abre o gerenciador de arquivos
+  (na NOR, apaga o jogo), ←/→ pulam uma página e Start pula para a próxima letra
+  (no SD e na NOR) ou marca o favorito (na aba Recentes).

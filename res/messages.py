@@ -35,6 +35,7 @@ en_strings = [
   "MSG_Q2_SRAMTST":  "After running this test, you must shutdown your GBA for aprox. 2 minutes. Continue?",
   "MSG_Q3_LOADPDB":  "Do you want to load and replace your patch database?",
   "MSG_Q4_DELREC":   "Delete recently played game? (Does not delete the ROM!)",
+  "MSG_Q6_DELFAV":   "Remove game from favorites? (Does not delete the ROM!)",
 
   "MSG_PATCHGEN_OK": "Patch generation completed!",        # alertmsg
   "MSG_SRAMTST_RDY": "You might now power off!",           # alertmsg
@@ -172,11 +173,15 @@ en_strings = [
 
   "MSG_OK_SETSAVE": "Settings saved!",                   # alertmsg
   "MSG_OK_DELFILE": "File deleted!",                     # alertmsg
+  "MSG_OK_FAVADD": "Added to favorites!",                # alertmsg
+  "MSG_OK_FAVDEL": "Removed from favorites!",            # alertmsg
   "MSG_OK_GENERIC": "Completed successfully!",           # alertmsg
 
   "MSG_FMGR_DEL":    "Delete file/directory",
   "MSG_FMGR_HIDE":   "Hide file/directory",
   "MSG_FMGR_UNHIDE": "Un-Hide file/directory",
+  "MSG_FMGR_FAVADD": "Add to favorites",
+  "MSG_FMGR_FAVDEL": "Remove from favorites",
 
   "MSG_SAVOPT_OPT0": "Write SRAM to sav",
   "MSG_SAVOPT_OPT1": "Load sav to SRAM",

@@ -37,6 +37,7 @@ iconlst = [
   ("ICON_SMSCART", None),
   ("ICON_NESCART", None),
   ("ICON_RECENT", None),
+  ("ICON_FAVORITES", None),
   ("ICON_DISK", None),
   ("ICON_FLASH", "SUPPORT_NORGAMES"),
   ("ICON_SETTINGS", None),

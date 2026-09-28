@@ -28,12 +28,12 @@
 
 #pragma GCC optimize ("Os")
 
-NOINLINE bool recent_flush(const t_rentry *rentries, unsigned rcount) {
+NOINLINE bool recent_flush(const char *fpath, const t_rentry *rentries, unsigned rcount) {
   WRITE_LOG("Flushing recently played games (%d entries)", rcount);
 
   // Flush to disk!
   FIL fo;
-  if (FR_OK != f_open(&fo, RECENT_FILEPATH, FA_WRITE | FA_CREATE_ALWAYS))
+  if (FR_OK != f_open(&fo, fpath, FA_WRITE | FA_CREATE_ALWAYS))
     return false;
 
   // Write stuff to disk. Use a 1KiB buffer and flush as full blocks fill.

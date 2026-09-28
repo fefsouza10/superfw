@@ -37,7 +37,7 @@ make BOARD=chis                          # gera superfw.gba (renomear para .fw a
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Pronto p/ teste no hardware | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Pronto p/ teste no hardware | 2 |
 | C | Modo suspender (sleep) no in-game menu | Protótipo p/ teste no hardware | 3 |
-| D | Captura de tela (screenshot) pelo in-game menu | Planejado | 4 |
+| D | Captura de tela (screenshot) pelo in-game menu | Em espera (decisão do usuário) | 4 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -174,6 +174,17 @@ disso, o IGM já está com ~48,6 de 60 KB ocupados.
      sprites normais e prioridades;
    - fase 2: BGs afins (modos 1 e 2), sprites afins, janelas e alpha blending.
 4. Script opcional `tools/gbv2bmp.py` para converter os dumps no PC.
+
+**Descoberta de 28/09/2026, que bloqueia a qualidade:** os registradores de scroll dos
+BGs (`BGxHOFS/VOFS`), os parâmetros afins (`BG2/3 PA–PD`, `X/Y`), as janelas
+(`WINxH/V`, `WININ/OUT`) e o `BLDY` são **somente escrita** no GBA. O IGM não
+consegue ler esses valores (o README já cita isso como a causa dos deslocamentos
+depois do in-game menu). Por isso, nos modos de tiles, que são a maioria dos jogos, a
+captura sairia com os fundos desalinhados sempre que o jogo usar scroll, e errada nos
+BGs afins. Só os modos bitmap (3/4/5) e as telas sem scroll sairiam corretos.
+Esperando a decisão do usuário: pausar ou fazer mesmo assim. A versão barata seria
+gravar um dump no IGM (reaproveitando o `writefd_mem_snapshot`) e converter no PC com
+`tools/gbv2bmp.py`, sem gastar a EWRAM do firmware, que está em 97%.
 
 **Limitações conhecidas:** efeitos de raster (HDMA ou mudanças de registrador no
 meio do frame, como ondas e parallax) não aparecem na captura, porque ela guarda

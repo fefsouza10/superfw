@@ -1,6 +1,6 @@
 # Roteiro de testes no GBA SP (SuperChis Prime)
 
-Firmware: `superfw-chis-HASH.fw` (branch `claude/project-thread-3djlx9`, commit `HASH`).
+Firmware: `superfw-chis-7d79dde.fw` (branch `claude/project-thread-3djlx9`, commit `7d79dde`).
 Corrige o in-game menu que travava na `3029df1`, traz o vídeo com imagem melhor
 e com som, e o novo modo carrossel das capas. Os itens 1 a 5 da rodada anterior
 passaram e não precisam ser repetidos.

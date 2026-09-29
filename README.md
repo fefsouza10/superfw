@@ -30,6 +30,12 @@ What's new in this fork
     goes in `/COVERS/B/P/BPEE.bmp`).
 - The size is picked in the UI tab, "Cover art" option: Disabled, Small (60x40),
   Medium (90x60) or Large (120x80, the default).
+- Carousel view: the UI tab option "Game list view" switches between List and
+  Carousel. The carousel shows the selected game's cover in the middle of the
+  screen, the previous and next games as small covers on the sides, and the name
+  and size below. Left/Right move to the previous/next game, Up/Down skip a page,
+  and R+Up/Down still jump between letters. It works in the SD, NOR, Recent and
+  Favorites tabs.
 - Covers are cached in SDRAM (40 covers), and the neighbours of the selection are
   preloaded while it stays still, so they show up instantly when scrolling.
 - `tools/covers/convert_covers.py` (Python + Pillow) builds the `COVERS` folder
@@ -81,6 +87,9 @@ What's new in this fork
 - `.gbv` files open in a built-in player: full screen 240x160, sound, and up to
   30 frames per second. About 20 to 25 minutes fit in one file (the limit is
   31MB, because the video is loaded into the cart SDRAM).
+- The player is built into the `chis` firmware. The `sd` firmware has no room
+  left for it in its 512KB flash: copy `gbvplayer.gba` (built by
+  `make BOARD=chis`) to `/.superfw/emulators/` on the SD card instead.
 - Buttons: A or Start pauses; Left/Right seek 10s; L/R, 60s; Up/Down change the
   volume; Select pins the time bar. B pauses, and B again exits to SuperFW.
 - The converter, **Video-to-GBA Converter by fefsouza10**
@@ -91,14 +100,24 @@ What's new in this fork
   pip install numpy pillow imageio-ffmpeg
   python3 tools/video/gbvconv.py episode.mkv      # writes episode.gbv
   ```
-  A 20-minute episode takes about 5 minutes to convert, with live progress (and
-  an animated Game Boy Advance) in the terminal.
+  Conversion takes about as long as the video itself (about 20 minutes for a
+  20-minute episode), with live progress (and an animated Game Boy Advance) in
+  the terminal.
+- The current format (GBV2) reuses the parts of the picture that did not change
+  or only moved, so it looks much sharper than the first version at the same
+  size. Files made with the old converter still play, but reconvert them to get
+  the better picture.
 
 ### Fixes
 - The in-game menu hot-key picked in the settings went back to L+R+Start after a
   reboot (it was saved but never read back). It is kept now.
 - The general settings tab could hang the menu because of a GCC 13 bug
   (`-fipa-ra` in Thumb code). The project now builds with `-fno-ipa-ra`.
+- The in-game menu crashed as soon as it opened in the builds with soft-patching:
+  a small table added by the compiler moved the menu code away from where the
+  loader copies it from. The build now checks this layout.
+- Videos converted on some PCs had no sound (ffmpeg rejected the audio sample
+  rate). Fixed in the converter.
 
 The full change log of this fork (in Portuguese) is in
 [`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).
@@ -272,6 +291,12 @@ Novidades deste fork
     `/COVERS/B/P/BPEE.bmp`).
 - Tamanho escolhido na aba UI, na opção "Capas": Desativado, Pequena (60x40),
   Média (90x60) ou Grande (120x80, o padrão).
+- Modo carrossel: a opção "Exibição" da aba UI alterna entre Lista e Carrossel.
+  O carrossel mostra a capa do jogo selecionado no meio da tela, os jogos
+  anterior e seguinte como capas menores nas laterais, e o nome e o tamanho
+  embaixo. ←/→ vão para o jogo anterior ou o próximo, ↑/↓ pulam uma página e
+  R+↑/↓ continuam pulando de letra. Funciona nas abas do SD, da NOR, de Recentes
+  e de Favoritos.
 - As capas ficam num cache na SDRAM (40 capas) e as dos jogos vizinhos são
   pré-carregadas quando a seleção fica parada, então aparecem na hora ao rolar a
   lista.
@@ -325,6 +350,9 @@ Novidades deste fork
 - Arquivos `.gbv` abrem num player próprio: tela cheia 240x160, som, e até
   30 quadros por segundo. Cabem cerca de 20 a 25 minutos num arquivo (o limite é
   31 MB, porque o vídeo é carregado na SDRAM do cartucho).
+- O player vem embutido na firmware `chis`. Na firmware `sd` ele não cabe mais
+  nos 512 KB da flash: nesse caso, copie o `gbvplayer.gba` (gerado pelo
+  `make BOARD=chis`) para `/.superfw/emulators/` no SD.
 - Botões: A ou Start pausa; ←/→ voltam ou avançam 10 s; L/R, 60 s; ↑/↓ mudam o
   volume; Select fixa a barra de tempo na tela. B pausa, e B de novo sai para a
   SuperFW.
@@ -336,9 +364,13 @@ Novidades deste fork
   pip install numpy pillow imageio-ffmpeg
   python3 tools/video/gbvconv.py episodio.mkv      # gera episodio.gbv
   ```
-  Um episódio de 20 minutos leva uns 5 minutos para converter, com o progresso
-  (e um Game Boy Advance animado) no terminal. As mensagens do conversor são em
-  inglês.
+  A conversão leva mais ou menos o tempo do próprio vídeo (uns 20 minutos para
+  um episódio de 20 minutos), com o progresso (e um Game Boy Advance animado) no
+  terminal. As mensagens do conversor são em inglês.
+- O formato atual (GBV2) reaproveita as partes da imagem que não mudaram ou só se
+  moveram, então fica bem mais nítido que a primeira versão no mesmo tamanho.
+  Arquivos feitos com o conversor antigo continuam tocando, mas vale convertê-los
+  de novo para ter a imagem melhor.
 
 ### Correções
 - A tecla do in-game menu escolhida nas configurações voltava para L+R+Start
@@ -346,6 +378,11 @@ Novidades deste fork
   mantida.
 - A aba de configurações gerais podia travar o menu por causa de um bug do
   GCC 13 (`-fipa-ra` no Thumb). O projeto agora compila com `-fno-ipa-ra`.
+- O in-game menu travava ao abrir nas builds com soft-patching: uma pequena
+  tabela gerada pelo compilador deslocava o código do menu do lugar de onde o
+  loader o copia. A build agora confere esse layout.
+- Vídeos convertidos em alguns PCs ficavam sem som (o ffmpeg recusava a taxa de
+  amostragem do áudio). Corrigido no conversor.
 
 O histórico completo das mudanças deste fork está em
 [`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).

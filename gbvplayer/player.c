@@ -7,14 +7,16 @@
  * DirectSound A, restarted every V-blank.
  *
  * File format (little endian):
- *   Header (64 bytes): "GBV1", u16 width, u16 height, u16 samples per vblank,
+ *   Header (64 bytes): "GBV1" or "GBV2", u16 width, u16 height, u16 samples per vblank,
  *   u16 reserved, u32 frame count, u32 index offset, u32 total vblanks,
  *   char title[40].
  *   Frames: u32 size, u8 flags (1: palette), u8 duration (vblanks),
  *   u16 audio bytes, [u16 palette[256]], [audio chunk], video data.
  *   Audio chunk: s16 predictor, u8 step index, u8 pad, 4-bit samples.
- *   Video data: 2-bit op per 8x8 macroblock (skip, fill, split), packed four
- *   per byte, then a byte stream. A split macroblock has one byte with four
+ *   Video data ("GBV2" adds s8 dx, s8 dy of global motion first): 2-bit op
+ *   per 8x8 macroblock (skip, fill, split, and in GBV2 copies from the
+ *   previous frame, see decode_video), packed four per byte, then a byte
+ *   stream. A split macroblock has one byte with four
  *   2-bit ops for its 4x4 blocks (skip, fill, two-color, raw) and their data.
  *   Skipped blocks keep what the back buffer had (the frame before the
  *   previous one), which is what the encoder assumes.
@@ -133,6 +135,7 @@ static volatile uint32_t shown_vblank;  // Start time of the displayed frame
 static volatile uint32_t vbcount;     // Free running vblank counter
 static unsigned volume = 4;           // 0..4
 volatile uint32_t late_vblanks;       // Vblanks where the decoder was late (debug)
+static unsigned gbv_version;          // 1 or 2 (motion copies)
 
 EWRAM_BSS static int8_t audio_ring[2][MAX_DUR * MAX_SPV] __attribute__((aligned(4)));
 EWRAM_BSS static uint16_t pal_buf[256];
@@ -255,8 +258,49 @@ IWRAM_CODE static const uint8_t *decode_block(const uint8_t *d, unsigned op, vol
   return d;
 }
 
+// Copies an 8x8 block from the front page (the previous frame), at any
+// pixel position. VRAM can be read in words, so unaligned rows are shifted.
+IWRAM_CODE static void copy_block(volatile uint32_t *dst, const volatile uint32_t *front,
+                                  unsigned sx, unsigned sy) {
+  const volatile uint32_t *s = front + sy * 60 + (sx >> 2);
+  unsigned sh = (sx & 3) * 8;
+  if (!sh) {
+    for (unsigned r = 0; r < 8; r++, s += 60, dst += 60) {
+      dst[0] = s[0];
+      dst[1] = s[1];
+    }
+  } else {
+    unsigned ish = 32 - sh;
+    for (unsigned r = 0; r < 8; r++, s += 60, dst += 60) {
+      uint32_t w0 = s[0], w1 = s[1], w2 = s[2];
+      dst[0] = (w0 >> sh) | (w1 << ish);
+      dst[1] = (w1 >> sh) | (w2 << ish);
+    }
+  }
+}
+
+IWRAM_CODE static const uint8_t *decode_split(const uint8_t *d, volatile uint32_t *dst) {
+  unsigned sub = *d++;
+  d = decode_block(d, sub & 3, dst);
+  d = decode_block(d, (sub >> 2) & 3, dst + 1);
+  d = decode_block(d, (sub >> 4) & 3, dst + 240);
+  return decode_block(d, (sub >> 6) & 3, dst + 241);
+}
+
 // Decodes the video part of a frame into the given page (stride 240).
-IWRAM_CODE static void decode_video(const uint8_t *ops, volatile uint32_t *page) {
+// Version 2 frames start with the global motion (s8 dx, s8 dy) and use op 3:
+// a type byte, 0: copy from the previous frame at the global motion, 1: same
+// plus a split refinement (sub-op 0 keeps the copied pixels), 2: copy at the
+// s8 dx, s8 dy that follow, 3: same plus refinement, 4: 4x4 pixels, each
+// one drawn as 2x2 (16 bytes).
+IWRAM_CODE static void decode_video(const uint8_t *ops, volatile uint32_t *page,
+                                    const volatile uint32_t *front) {
+  int gdx = 0, gdy = 0;
+  if (gbv_version >= 2) {
+    gdx = (int8_t)ops[0];
+    gdy = (int8_t)ops[1];
+    ops += 2;
+  }
   unsigned nmb = mbw * mbh;
   const uint8_t *d = ops + ((nmb + 3) >> 2);
   unsigned mb = 0;
@@ -272,12 +316,28 @@ IWRAM_CODE static void decode_video(const uint8_t *ops, volatile uint32_t *page)
           dst[r * 60 + 1] = c;
         }
       }
-      else if (op == 2) {
-        unsigned sub = *d++;
-        d = decode_block(d, sub & 3, dst);
-        d = decode_block(d, (sub >> 2) & 3, dst + 1);
-        d = decode_block(d, (sub >> 4) & 3, dst + 240);
-        d = decode_block(d, (sub >> 6) & 3, dst + 241);
+      else if (op == 2)
+        d = decode_split(d, dst);
+      else if (op == 3) {
+        unsigned t = *d++;
+        if (t < 4) {
+          int dx = gdx, dy = gdy;
+          if (t & 2) {
+            dx = (int8_t)d[0];
+            dy = (int8_t)d[1];
+            d += 2;
+          }
+          copy_block(dst, front, x * 8 + dx, y * 8 + dy);
+          if (t & 1)
+            d = decode_split(d, dst);
+        } else {
+          for (unsigned r = 0; r < 4; r++, d += 4) {
+            uint32_t w0 = d[0] * 0x0101U | d[1] * 0x01010000U;
+            uint32_t w1 = d[2] * 0x0101U | d[3] * 0x01010000U;
+            dst[r * 120] = w0; dst[r * 120 + 1] = w1;
+            dst[r * 120 + 60] = w0; dst[r * 120 + 61] = w1;
+          }
+        }
       }
     }
   }
@@ -285,6 +345,10 @@ IWRAM_CODE static void decode_video(const uint8_t *ops, volatile uint32_t *page)
 
 static volatile uint32_t *back_page(void) {
   return (volatile uint32_t*)(MEM_VRAM + ((REG_DISPCNT & 0x10) ? 0 : 0xA000));
+}
+
+static volatile uint32_t *front_page(void) {
+  return (volatile uint32_t*)(MEM_VRAM + ((REG_DISPCNT & 0x10) ? 0xA000 : 0));
 }
 
 // Decodes the next frame into the back buffer and the free audio ring half.
@@ -311,7 +375,7 @@ static bool decode_next(void) {
     decode_audio(p, audio_ring[cur_half ^ 1], dur * hdr->spv, volume);
     p += abytes;
   }
-  decode_video(p, back_page());
+  decode_video(p, back_page(), front_page());
 
   fptr += size;
   next_frame++;
@@ -407,8 +471,10 @@ static void osd_show(bool show) {
 static const t_gbv_header *find_video(void) {
   const uint8_t *p = (const uint8_t*)(((uintptr_t)__rom_end + 3) & ~3U);
   for (unsigned i = 0; i < 1024; i += 4)
-    if (p[i] == 'G' && p[i + 1] == 'B' && p[i + 2] == 'V' && p[i + 3] == '1')
+    if (p[i] == 'G' && p[i + 1] == 'B' && p[i + 2] == 'V' && (p[i + 3] == '1' || p[i + 3] == '2')) {
+      gbv_version = p[i + 3] - '0';
       return (const t_gbv_header*)&p[i];
+    }
   return 0;
 }
 

@@ -18,6 +18,7 @@ from PIL import Image
 VBLANK_HZ = 16777216 / 280896      # 59.7275
 MAX_DUR = 8                         # Max vblanks per frame (player limit)
 HDR_SIZE = 64
+MAX_VBLANK_BYTES = 5000              # Video bytes the player decodes per vblank
 
 def ffmpeg_exe():
   try:
@@ -263,16 +264,22 @@ def make_lut(pal):
 # --------------------------------------------------------------- Video ---
 
 class VideoEncoder:
+  # Per frame: global motion (s8 dx, s8 dy), 2-bit ops per 8x8 macroblock,
+  # then the data. Ops: 0 skip (keep the back page, two frames ago), 1 fill,
+  # 2 split into 4x4 blocks, 3 extended (copies from the previous frame,
+  # which is the front page, or a half resolution block). See player.c.
+  SUB_BYTES = np.array([0, 1, 4, 16])
+
   def __init__(self, w, h):
     self.w, self.h = w, h
     self.mbw, self.mbh = w // 8, h // 8
     self.pages = [np.zeros((h, w), np.uint8), np.zeros((h, w), np.uint8)]
     self.cur = 0          # Page the next frame is decoded into
-    self.lam = 20.0
+    self.prev_src = None
+    self.lam = 10.0
 
   def blocks4(self, a):
     # (H, W, ...) -> (mbh, mbw, 2, 2, 4, 4, ...): 4x4 blocks inside 8x8 macroblocks
-    h, w = self.h, self.w
     s = a.shape[2:]
     return a.reshape(self.mbh, 2, 4, self.mbw, 2, 4, *s).transpose(0, 3, 1, 4, 2, 5, *range(6, 6 + len(s)))
 
@@ -280,24 +287,47 @@ class VideoEncoder:
     s = b.shape[6:]
     return b.transpose(0, 2, 4, 1, 3, 5, *range(6, 6 + len(s))).reshape(self.h, self.w, *s)
 
-  def encode(self, rgb5, pal, lut, intra, lam):
-    # rgb5: (H, W, 3) int 0..31. Returns (video bytes, decoded indices).
+  def global_motion(self, cur, prev):
+    # Coarse search on a 1/4 size image, then refined at full size.
+    def small(a):
+      h, w = a.shape[0] // 4 * 4, a.shape[1] // 4 * 4
+      return a[:h, :w].reshape(h // 4, 4, w // 4, 4, 3).mean((1, 3))
+    c, p = small(cur), small(prev)
+    def sad(a, b, dx, dy):
+      h, w = a.shape[:2]
+      ya, yb = max(0, -dy), min(h, h - dy)
+      xa, xb = max(0, -dx), min(w, w - dx)
+      if yb - ya < h // 2 or xb - xa < w // 2:
+        return 1e18
+      return np.abs(a[ya:yb, xa:xb] - b[ya + dy:yb + dy, xa + dx:xb + dx]).mean()
+    best = min(((sad(c, p, dx, dy), dx, dy) for dy in range(-6, 7) for dx in range(-8, 9)))
+    bx, by = best[1] * 4, best[2] * 4
+    best = min(((sad(cur, prev, bx + dx, by + dy), bx + dx, by + dy)
+                for dy in range(-3, 4) for dx in range(-3, 4)))
+    if best[0] > sad(cur, prev, 0, 0) * 0.97:
+      return 0, 0
+    return int(np.clip(best[1], -100, 100)), int(np.clip(best[2], -100, 100))
+
+  def encode(self, rgb5, pal, lut, intra, target):
+    # rgb5: (H, W, 3) int 0..31. intra: 2 keyframe (no references), 1 no
+    # skip (the back page is stale), 0 anything goes. Picks the lambda that
+    # makes the frame close to target bytes. Returns (bytes, lambda).
+    H, W, mbh, mbw = self.h, self.w, self.mbh, self.mbw
     palf = pal.astype(np.float32)
-    T = self.blocks4(rgb5.astype(np.float32))                        # (mbh,mbw,2,2,4,4,3)
-    ref = self.blocks4(self.pages[self.cur])                         # indices
-    def cidx(c):   # float colors (...,3) -> palette index
+    src = rgb5.astype(np.float32)
+    T = self.blocks4(src)                                            # (mbh,mbw,2,2,4,4,3)
+    def cidx(c):
       c = np.clip(np.rint(c), 0, 31).astype(np.int32)
       return lut[c[..., 0] * 1024 + c[..., 1] * 32 + c[..., 2]]
     def err(idx, tgt):
       return ((palf[idx] - tgt) ** 2).sum(-1)
+    INF = np.float32(1e18)
 
-    q = cidx(T)                                                      # raw indices
+    # Plain 4x4 modes
+    q = cidx(T)
     e_raw = err(q, T).sum((-1, -2))
-    e_skip = err(ref, T).sum((-1, -2))
-    mean = T.mean((4, 5))                                            # (mbh,mbw,2,2,3)
-    cf = cidx(mean)
+    cf = cidx(T.mean((4, 5)))
     e_fill = err(cf[..., None, None], T).sum((-1, -2))
-    # Two colors: split by luma around the block mean
     luma = T @ np.array([2, 4, 1], np.float32)
     hi = luma > luma.mean((4, 5), keepdims=True)
     nh = hi.sum((4, 5))
@@ -306,57 +336,145 @@ class VideoEncoder:
     c0, c1 = cidx(m0), cidx(m1)
     q2 = np.where(hi, c1[..., None, None], c0[..., None, None])
     e_2c = err(q2, T).sum((-1, -2))
+    e_skip = err(self.blocks4(self.pages[self.cur]), T).sum((-1, -2)) if intra == 0 else \
+             np.full(e_fill.shape, INF, np.float32)
+    sub_e = np.stack([e_skip, e_fill, e_2c, e_raw], -1)             # (mbh,mbw,2,2,4)
 
-    INF = np.float32(1e18)
-    costs = np.stack([np.where(intra, INF, e_skip), e_fill + lam * 10, e_2c + lam * 34, e_raw + lam * 130], -1)
-    sub_op = costs.argmin(-1)                                        # (mbh,mbw,2,2)
-    sub_cost = costs.min(-1).sum((-1, -2)) + lam * 8                 # split cost (sub-op byte)
-    # Macroblock options
-    mb_skip = np.where(intra, INF, e_skip.sum((-1, -2)))
-    mmean = T.mean((2, 3, 4, 5))
-    mcf = cidx(mmean)
-    mb_fill = err(mcf[:, :, None, None, None, None], T).sum((-1, -2, -3, -4)) + lam * 8
-    mb_op = np.stack([mb_skip, mb_fill, sub_cost], -1).argmin(-1) # 0 skip, 1 fill, 2 split
+    # Macroblock fill and half resolution (4x4 pixels, each one 2x2)
+    mcf = cidx(T.mean((2, 3, 4, 5)))
+    mb_fill = err(mcf[:, :, None, None, None, None], T).sum((2, 3, 4, 5))
+    M = src.reshape(mbh, 8, mbw, 8, 3).transpose(0, 2, 1, 3, 4)       # (mbh,mbw,8,8,3)
+    hq = cidx(M.reshape(mbh, mbw, 4, 2, 4, 2, 3).mean((3, 5)))        # (mbh,mbw,4,4)
+    hrec = np.repeat(np.repeat(hq, 2, 2), 2, 3)
+    e_half = err(hrec, M).sum((2, 3))
 
-    # Build the decoded image and the bitstream
+    # Copies from the previous frame (front page)
+    gdx = gdy = 0
+    have_copy = intra < 2
+    if have_copy:
+      front = self.pages[self.cur ^ 1]
+      P = palf[front]
+      if self.prev_src is not None:
+        gdx, gdy = self.global_motion(src, self.prev_src)
+      cands = {(0, 0), (gdx, gdy)}
+      for d in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
+        cands.add((gdx + d[0], gdy + d[1]))
+      for d in ((2, 0), (-2, 0), (0, 2), (0, -2), (1, 0), (-1, 0), (0, 1), (0, -1)):
+        cands.add(d)
+      cands = sorted(cands)
+      R = max(4, max(max(abs(a), abs(b)) for a, b in cands))
+      Pp = np.pad(P, ((R, R), (R, R), (0, 0)), mode="edge")
+      ys, xs = np.arange(mbh) * 8, np.arange(mbw) * 8
+      E = np.empty((len(cands), mbh, mbw, 2, 2), np.float32)
+      for i, (dx, dy) in enumerate(cands):
+        S = Pp[R + dy:R + dy + H, R + dx:R + dx + W]
+        e = self.blocks4(((S - src) ** 2).sum(-1)).sum((-1, -2))
+        ok = ((ys + dy >= 0) & (ys + dy + 8 <= H))[:, None] & ((xs + dx >= 0) & (xs + dx + 8 <= W))[None, :]
+        E[i] = np.where(ok[:, :, None, None], e, INF)
+      gi = cands.index((gdx, gdy))
+      e_g = E[gi]
+      bi = E.sum((3, 4)).argmin(0)                                    # best vector per MB
+      e_mv = np.take_along_axis(E, bi[None, :, :, None, None], 0)[0]
+    else:
+      e_g = e_mv = np.full(e_fill.shape, INF, np.float32)
+      bi = np.zeros((mbh, mbw), np.int64)
+      cands = [(0, 0)]
+
+    sb = self.SUB_BYTES.astype(np.float32)
+    skip_mb = np.where(intra == 0, e_skip.sum((2, 3)), INF)
+    g_mb, mv_mb = e_g.sum((2, 3)), e_mv.sum((2, 3))
+    def decide(lam):
+      sc = sub_e + lam * sb                                           # (...,4)
+      so3 = sc[..., 1:].argmin(-1) + 1                                # best coded sub-op
+      c3 = np.take_along_axis(sc, so3[..., None], -1)[..., 0]
+      so = np.where(sc[..., 0] < c3, 0, so3)
+      sbest = np.minimum(sc[..., 0], c3)
+      # Refinement after a copy: sub-op 0 keeps the copied pixels.
+      sog = np.where(e_g < c3, 0, so3)
+      som = np.where(e_mv < c3, 0, so3)
+      opts = np.stack([
+        skip_mb,                                                     # 0 skip
+        mb_fill + lam * 1,                                           # 1 fill
+        sbest.sum((2, 3)) + lam * 1,                                 # 2 split
+        g_mb + lam * 1,                                              # 3/0 global copy
+        np.minimum(e_g, c3).sum((2, 3)) + lam * 2,                   # 3/1 + refine
+        mv_mb + lam * 3,                                             # 3/2 vector copy
+        np.minimum(e_mv, c3).sum((2, 3)) + lam * 4,                  # 3/3 + refine
+        e_half + lam * 17,                                           # 3/4 half res
+      ], -1)
+      mo = opts.argmin(-1)
+      base_b = np.array([0, 1, 1, 1, 2, 3, 4, 17], np.float32)[mo]
+      extra = np.select([mo == 2, mo == 4, mo == 6],
+                        [sb[so].sum((2, 3)), sb[sog].sum((2, 3)), sb[som].sum((2, 3))], 0)
+      return mo, so, sog, som, float((base_b + extra).sum()) + 2 + (mbw * mbh + 3) // 4
+
+    # Lambda search (bisection in log space), starting around the last one.
+    lo, hi_l = math.log(self.lam / 16), math.log(self.lam * 16)
+    if decide(math.exp(lo))[4] <= target:
+      lo = math.log(0.01)
+    if decide(math.exp(hi_l))[4] > target:
+      hi_l = math.log(1e7)
+    for _ in range(11):
+      mid = (lo + hi_l) / 2
+      if decide(math.exp(mid))[4] > target:
+        lo = mid
+      else:
+        hi_l = mid
+    lam = math.exp(hi_l)
+    self.lam = min(max(lam, 0.05), 1e6)
+    mo, so, sog, som, _ = decide(lam)
+
+    # Bitstream and the decoded picture (exactly what the player does)
     out = self.pages[self.cur].copy()
     ob = self.blocks4(out)
-    ops = bytearray((self.mbw * self.mbh + 3) // 4)
+    front = self.pages[self.cur ^ 1]
+    ops = bytearray((mbw * mbh + 3) // 4)
     data = bytearray()
+    def subdata(y, x, sop):
+      data.append(int(sop[0, 0]) | int(sop[0, 1]) << 2 | int(sop[1, 0]) << 4 | int(sop[1, 1]) << 6)
+      for by in range(2):
+        for bx in range(2):
+          o = sop[by, bx]
+          if o == 1:
+            c = int(cf[y, x, by, bx]); data.append(c); ob[y, x, by, bx] = c
+          elif o == 2:
+            m = int((hi[y, x, by, bx].reshape(16) * (1 << np.arange(16))).sum())
+            data.extend((int(c0[y, x, by, bx]), int(c1[y, x, by, bx]), m & 255, m >> 8))
+            ob[y, x, by, bx] = q2[y, x, by, bx]
+          elif o == 3:
+            blk = q[y, x, by, bx]
+            data.extend(blk.astype(np.uint8).tobytes())
+            ob[y, x, by, bx] = blk
     n = 0
-    for y in range(self.mbh):
-      for x in range(self.mbw):
-        op = int(mb_op[y, x])
+    for y in range(mbh):
+      for x in range(mbw):
+        o = int(mo[y, x])
+        op = min(o, 3)
         ops[n >> 2] |= op << ((n & 3) * 2)
         n += 1
-        if op == 1:
-          c = int(mcf[y, x])
-          data.append(c)
-          ob[y, x] = c
-        elif op == 2:
-          so = sub_op[y, x]
-          data.append(int(so[0, 0]) | int(so[0, 1]) << 2 | int(so[1, 0]) << 4 | int(so[1, 1]) << 6)
-          for by in range(2):
-            for bx in range(2):
-              o = so[by, bx]
-              if o == 1:
-                c = int(cf[y, x, by, bx]); data.append(c); ob[y, x, by, bx] = c
-              elif o == 2:
-                h = hi[y, x, by, bx]
-                m = 0
-                for r in range(4):
-                  for cc in range(4):
-                    if h[r, cc]: m |= 1 << (r * 4 + cc)
-                data += bytes([int(c0[y, x, by, bx]), int(c1[y, x, by, bx]), m & 255, m >> 8])
-                ob[y, x, by, bx] = q2[y, x, by, bx]
-              elif o == 3:
-                blk = q[y, x, by, bx]
-                data += blk.astype(np.uint8).tobytes()
-                ob[y, x, by, bx] = blk
-    dec = self.unblocks4(ob)
-    self.pages[self.cur] = dec
+        if o == 1:
+          c = int(mcf[y, x]); data.append(c); ob[y, x] = c
+        elif o == 2:
+          subdata(y, x, so[y, x])
+        elif o in (3, 4, 5, 6):
+          dx, dy = (gdx, gdy) if o < 5 else cands[bi[y, x]]
+          data.append(o - 3)
+          if o >= 5:
+            data.extend(struct.pack("<bb", dx, dy))
+          blk = front[y * 8 + dy:y * 8 + dy + 8, x * 8 + dx:x * 8 + dx + 8]
+          ob[y, x] = blk.reshape(2, 4, 2, 4).transpose(0, 2, 1, 3)
+          if o == 4:
+            subdata(y, x, sog[y, x])
+          elif o == 6:
+            subdata(y, x, som[y, x])
+        elif o == 7:
+          data.append(4)
+          data.extend(hq[y, x].astype(np.uint8).tobytes())
+          ob[y, x] = hrec[y, x].reshape(2, 4, 2, 4).transpose(0, 2, 1, 3)
+    self.pages[self.cur] = self.unblocks4(ob)
     self.cur ^= 1
-    return bytes(ops + data), dec
+    self.prev_src = src
+    return struct.pack("<bb", gdx, gdy) + bytes(ops + data), lam
 
 # ---------------------------------------------------------------- Main ---
 
@@ -376,9 +494,22 @@ def read_frames(ff, fn, w, h, fps_out):
   p.wait()
 
 def read_audio(ff, fn, rate):
-  p = subprocess.run([ff, "-v", "error", "-i", fn, "-vn", "-ac", "1", "-ar", "%f" % rate,
+  # ffmpeg only takes whole sample rates. The player rate (16777216 / timer
+  # reload) is within 0.05 Hz of it, a few ms of drift over 20 minutes.
+  p = subprocess.run([ff, "-v", "error", "-i", fn, "-vn", "-ac", "1", "-ar", str(int(round(rate))),
                       "-f", "s16le", "-"], capture_output=True)
-  return np.frombuffer(p.stdout, np.int16)
+  if p.returncode or not p.stdout:
+    raise RuntimeError("could not decode the audio track: " +
+                       p.stderr.decode("utf-8", "replace").strip()[-200:])
+  a = np.frombuffer(p.stdout, np.int16)
+  # Quiet tracks lose detail in the 8-bit output and are hard to hear on the
+  # GBA speaker: bring the loud parts close to full scale (up to 4x gain).
+  peak = np.percentile(np.abs(a.astype(np.int32)), 99.9) if len(a) else 0
+  if peak > 0:
+    gain = min(4.0, 29000 / peak)
+    if gain > 1.1:
+      a = np.clip(a.astype(np.float32) * gain, -32768, 32767).astype(np.int16)
+  return a
 
 def encode(args, budget_scale, ui, attempt, media):
   ff = ffmpeg_exe()
@@ -393,7 +524,8 @@ def encode(args, budget_scale, ui, attempt, media):
   audio_bytes = (total_vb * spv) // 2 + 4 * duration * fps
   max_bytes = int(args.max_mb * 1024 * 1024) - 64 * 1024        # room for the player
   nframes_est = max(1, duration * fps)
-  video_budget = (max_bytes - audio_bytes - nframes_est * 12 - 600 * 520) * budget_scale
+  # Palettes (512 bytes per keyframe) are paid from the video budget as they come.
+  video_budget = (max_bytes - audio_bytes - nframes_est * 12) * 0.985 * budget_scale
   per_vblank = max(50.0, video_budget / max(1, total_vb))
   passtxt = "" if attempt == 0 else " (pass %d)" % (attempt + 1)
   if spv:
@@ -468,13 +600,19 @@ def encode(args, budget_scale, ui, attempt, media):
     if pending:
       flush()
 
-    intra = intra_left > 0
-    vbytes, dec = venc.encode(rgb5, gop_pal, gop_lut, intra, venc.lam)
-    # Rate control: lambda follows the bytes spent vs the budget earned so far
-    # (merged frames earn budget too). About 4 s of video to react.
+    intra = intra_left
+    # Rate control: every frame gets its share of the budget, plus a part of
+    # what is left over (or minus what was overspent) spread over ~3 seconds.
+    # The encoder then picks the lambda that fits the frame in that size.
+    base = per_vblank * dur
+    debt = max(spent - per_vblank * t_start, -per_vblank * 600)
+    target = base - debt * dur / 180
+    target = min(max(target, base * 0.25), base * (8 if intra == 2 else 4))
+    target = min(target, MAX_VBLANK_BYTES * dur)    # Keeps the decoder on time
+    vbytes, lam = venc.encode(rgb5, gop_pal, gop_lut, intra, target)
     spent += len(vbytes) + (512 if newgop else 0) + 8
-    debt = spent - per_vblank * t_end
-    venc.lam = float(np.clip(venc.lam * math.exp(np.clip(debt / (per_vblank * 240), -1, 1) * 0.15), 0.02, 1e6))
+    if os.environ.get("GBV_DEBUG"):
+      sys.stderr.write("%d %d %d %.2f %d\n" % (frame_no, len(vbytes), int(target), lam, int(debt)))
 
     flags = 0
     pb = b""
@@ -505,7 +643,7 @@ def encode(args, budget_scale, ui, attempt, media):
   for f, o, t in index:
     out += struct.pack("<III", f, o, t)
   title = os.path.splitext(os.path.basename(args.input))[0].encode("utf-8")[:39]
-  out[:HDR_SIZE] = struct.pack("<4sHHHHIII40s", b"GBV1", w, h, spv, 0, frames_out, index_off,
+  out[:HDR_SIZE] = struct.pack("<4sHHHHIII40s", b"GBV2", w, h, spv, 0, frames_out, index_off,
                                vb_time, title)
   return bytes(out), max_bytes
 
@@ -564,6 +702,8 @@ def main():
     ui.update(stage="Done!", progress=1.0, info="")
   except KeyboardInterrupt:
     ui.fail("cancelled by the user.")
+  except RuntimeError as e:
+    ui.fail(str(e))
   ui.finish()
   open(args.output, "wb").write(data)
 

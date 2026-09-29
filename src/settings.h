@@ -61,6 +61,7 @@ extern uint8_t lang_id;
 extern uint8_t recent_menu;
 extern uint8_t hide_hidden;
 extern uint8_t cover_size;
+extern uint8_t browser_view;
 extern uint8_t anim_speed;
 
 // Defaults/Settings

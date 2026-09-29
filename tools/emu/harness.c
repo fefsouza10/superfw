@@ -13,6 +13,7 @@
 //               "shot NAME" (writes NAME.ppm), "pc" (prints the CPU PC).
 
 #include <mgba/core/core.h>
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/config.h>
 #include <mgba/core/timing.h>
 #include <mgba/gba/core.h>
@@ -170,9 +171,21 @@ static void shot(const char *dir, const char *name) {
   fclose(f);
 }
 
+static FILE *audio_out;   // Raw 32768 Hz mono s16 capture (see "audio")
+
 static void run_frames(unsigned n) {
-  for (unsigned i = 0; i < n; i++)
+  for (unsigned i = 0; i < n; i++) {
     core->runFrame(core);
+    struct blip_t *ch = core->getAudioChannel(core, 0);
+    short buf[2048];
+    int avail;
+    while ((avail = blip_samples_avail(ch)) > 0) {
+      int got = blip_read_samples(ch, buf, avail > 2048 ? 2048 : avail, 0);
+      if (audio_out)
+        fwrite(buf, 2, got, audio_out);
+    }
+    blip_clear(core->getAudioChannel(core, 1));
+  }
 }
 
 int main(int argc, char **argv) {
@@ -197,6 +210,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   core->reset(core);
+  blip_set_rates(core->getAudioChannel(core, 0), core->frequency(core), 32768);
+  blip_set_rates(core->getAudioChannel(core, 1), core->frequency(core), 32768);
 
   gba = (struct GBA*)core->board;
   flash_buf = calloc(1, SDRAM_SIZE);
@@ -288,6 +303,15 @@ int main(int argc, char **argv) {
         printf("HOT %08x %u\n", 0x02000000 | (best << 4) | 0x7c0000 * 0, hist[best]);
         hist[best] = 0;
       }
+    } else if (!strcmp(cmd, "audio")) {
+      // Records the left channel for N frames: audio NAME FRAMES
+      char fn[512];
+      snprintf(fn, sizeof(fn), "%s/%s.raw", argv[4], a1);
+      audio_out = fopen(fn, "wb");
+      core->setKeys(core, 0);
+      run_frames(n);
+      fclose(audio_out);
+      audio_out = NULL;
     } else if (!strcmp(cmd, "peek")) {
       // Prints the 32-bit word at a GBA address (hex)
       uint32_t a = strtoul(a1, NULL, 16);

@@ -78,4 +78,17 @@ bool coverart_available(void);
 // Blit the loaded cover into the bottom-right pane of `frame`.
 void coverart_draw(volatile uint8_t *frame);
 
+// Carousel view helpers. The selected cover can be drawn anywhere, and the
+// cached covers of other entries are turned into 48x32 thumbnails for 64x32
+// 8bpp OBJ sprites, which use a fixed color cube in the OBJ palette.
+#define THUMB_W          48
+#define THUMB_H          32
+#define OBJ_CUBE_BASE    38      // OBJ palette 38..253 (icons use 0..37, 255 is the selector)
+void coverart_draw_at(volatile uint8_t *frame, unsigned x, unsigned y);
+int coverart_peek(const char *rom_fullpath, uint32_t filesize);   // slot, or -1
+int coverart_peek_gcode(const uint8_t gcode[4]);
+uint32_t coverart_slot_id(int slot);    // Changes when the slot is reused
+void coverart_obj_palette(void);
+void coverart_thumb(int slot, volatile uint16_t *tiles);
+
 #endif

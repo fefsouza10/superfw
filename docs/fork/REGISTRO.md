@@ -51,15 +51,16 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 |---|--------------------------------------|--------------|------------|
 | A | Capas (cover-art) no navegador (PR #69 upstream) | Cache validado; tamanho selecionável e /COVERS p/ teste | 1 (principal) |
 | B | Navegação: pular por letra + favoritos | Validado no GBA SP (28/09) | 2 |
-| C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR); combinação configurável e suspensão no menu prontos p/ teste | 3 |
+| C | Modo suspender (sleep) no in-game menu | Validado no GBA SP (28/09, >10 min, SD e NOR); combinação configurável e suspensão no menu prontos p/ teste (o IGM travava na 3029df1, corrigido em 29/09) | 3 |
 | D | Captura de tela (screenshot) pelo in-game menu | Pausada (decisão do usuário em 28/09) | 4 |
 | E | Patches IPS/UPS/BPS ao carregar (soft-patching) | Pronto p/ teste no hardware (validado no emulador) | 5 |
 | F | README em português e inglês com as novidades | Pronto | 6 |
 | G | Busca por nome | Pronto p/ teste no hardware | 7 |
-| H | Player de vídeo (.gbv) + conversor no PC | Pronto p/ teste no hardware (tempo real no emulador) | 8 |
+| H | Player de vídeo (.gbv) + conversor no PC | Toca no GBA SP (29/09); formato GBV2 com imagem melhor e som corrigido, pronto p/ teste | 8 |
 | I | Economia de bateria no menu (CPU parada no V-blank) | Pronto p/ teste no hardware | 9 |
 | J | EWRAM rápida por jogo + teste mais forte | Planejado (o overclock global dá bugs no SP do Felipe) | 10 |
-| K | Tempo de jogo, carrossel, papel de parede (por último) | Planejado | 11 |
+| K | Carrossel de capas (estilo DSPico) | Pronto p/ teste no hardware (validado no emulador) | 11 |
+| L | Tempo de jogo, papel de parede (por último) | Planejado | 12 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -232,6 +233,55 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-29 — Correção do in-game menu, vídeo GBV2 com som e carrossel de capas
+
+Resultado do teste da 3029df1 no GBA SP: itens 1 a 5 OK; vídeo tocava, mas muito
+pixelado e sem som; o in-game menu travava sempre ao abrir.
+
+- **In-game menu travando (desde a `97e70da`, patches IPS/UPS/BPS):** o código do
+  soft-patching puxa uma rotina da libgcc que traz uma tabela `.ARM.exidx`. O
+  linker a colocava entre o `.rodata` e a parte IWRAM do payload, então a parte
+  IWRAM ficava 8 bytes depois de `__EWRAM_END__`, que é de onde o `ingame.S` a
+  copia. O IGM executava lixo. `ldscripts/gba_ingame.ld` agora põe `.ARM.exidx*`
+  dentro do `.rodata` e tem um `ASSERT` que falha o build se o layout sair do
+  lugar de novo. Achado por bisect no emulador (91feaa5 OK, 97e70da trava);
+  validado abrindo o IGM num jogo de teste.
+- `src/loader.c`: o nome da combinação de acordar é copiado para o cabeçalho do
+  IGM (na SDRAM) com escrita de 32 bits (a SDRAM não aceita escrita de 8 bits).
+- **Vídeo sem som:** o conversor passava a taxa fracionária (10512,04 Hz) ao
+  `-ar` do ffmpeg, que recusava; o áudio saía vazio sem erro. Agora a taxa é
+  arredondada, e um erro do ffmpeg interrompe a conversão com mensagem. O áudio
+  também é normalizado (pico no percentil 99,9, ganho até 4x). O harness ganhou o
+  comando `audio NOME QUADROS` (grava o som a 32768 Hz) e confirmou o som.
+- **Qualidade do vídeo, formato GBV2:** cada quadro tem um vetor de movimento
+  global e os macroblocos podem copiar do quadro anterior (no vetor global ou num
+  vetor próprio), com refinamento opcional, além de blocos 4x4 em meia resolução.
+  O controle de taxa agora procura o λ de cada quadro (bisseção) com uma "dívida"
+  de bytes limitada, em vez do controle antigo que oscilava e deixava segundos
+  inteiros em blocos 8x8 de cor única. Limite de 5000 bytes por V-blank para o
+  player nunca atrasar. Resultado com a densidade de 20 min: imagem nitidamente
+  melhor (`/mnt/project-files/video/qualidade-antes-depois.png`), sem atraso no
+  emulador. O player lê GBV1 e GBV2. A conversão ficou mais lenta: ~1 s por
+  segundo de vídeo.
+- **Carrossel de capas (estilo DSPico):** opção "Exibição" na aba UI
+  (`browser_view=` no `ui-settings.txt`, Lista/Carrossel). No carrossel, a capa
+  do jogo selecionado fica no meio (com a paleta própria), o anterior e o
+  seguinte aparecem como miniaturas 48x32 em sprites 64x32 de 8 bits (cubo de
+  cores fixo na paleta de OBJ 38..253, tiles 672 e 736), e o nome e o tamanho
+  ficam embaixo. ←/→ andam um item, ↑/↓ pulam página, R+↑/↓ continuam pulando
+  letra (as teclas são trocadas em `carousel_keys`). Funciona no SD, NOR,
+  Recentes e Favoritos; Recentes e Favoritos agora também pré-carregam as capas
+  vizinhas. Sem capa, mostra o ícone do arquivo.
+- **Build `sd` sem player de vídeo embutido:** com o carrossel e o GBV2, a
+  firmware `sd` passou ~950 bytes dos 512 KB (antes sobravam 896 bytes). O player
+  (~6 KB comprimido) saiu do `sd` no `Makefile`; ele continua funcionando se o
+  `gbvplayer.gba` estiver em `/.superfw/emulators/`. O `chis` (limite de 2 MB)
+  continua com tudo embutido. `sd` agora com 519168 bytes, `lite` com 486912.
+- Arquivos: `ldscripts/gba_ingame.ld`, `src/loader.c`, `src/menu.c`,
+  `src/coverart.c/.h`, `src/settings.c/.h`, `res/messages.py`,
+  `res/lang/pt.json`, `res/lang/es.json`, `gbvplayer/player.c`,
+  `tools/video/gbvconv.py`, `tools/emu/harness.c`, `README.md`.
 
 ### 2026-09-28 — Conversor com progresso animado e README com inglês primeiro
 
@@ -589,3 +639,9 @@ Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
   código errado quando uma função `void` volta com `pop {r0}; bx r0` (ver entrada de
   28/09, "Correções do 1º teste"). O `Makefile` agora usa `-fno-ipa-ra`, e ele não
   deve ser removido.
+- **Payload do in-game menu:** a parte IWRAM precisa ser gravada logo depois de
+  `__EWRAM_END__` (o `ingame.S` copia de `início + __EWRAM_SIZE__`). Qualquer
+  seção nova que o linker encaixe entre as duas (como `.ARM.exidx` da libgcc)
+  quebra o IGM; o `ASSERT` em `ldscripts/gba_ingame.ld` agora pega isso.
+- **Conversor de vídeo:** o `-ar` do ffmpeg só aceita taxa inteira. Para depurar o
+  controle de taxa, `GBV_DEBUG=1` imprime os bytes e o λ de cada quadro.

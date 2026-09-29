@@ -74,6 +74,7 @@ uint8_t menu_theme = 0;
 uint8_t lang_id = 0;
 uint8_t recent_menu = 1;
 uint8_t hide_hidden = 0;
+uint8_t browser_view = 0;       // 0: list, 1: carousel
 uint8_t cover_size = 3;         // 0: off, 1..3: small, medium, large
 uint8_t anim_speed = animspd_cnt / 2;
 
@@ -127,8 +128,10 @@ bool save_ui_settings() {
     "recent_menu=%u\n"
     "anim_speed=%u\n"
     "hide_hidden=%u\n"
-    "cover_size=%u\n",
-    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, cover_size);
+    "cover_size=%u\n"
+    "browser_view=%u\n",
+    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, cover_size,
+    browser_view);
 
   UINT wrbytes;
   FRESULT res = f_write(&fd, buf, strlen(buf), &wrbytes);
@@ -250,6 +253,7 @@ static void parse_ui_settings(void *usr, const char *var, const char *value) {
       { "recent_menu", &recent_menu },
       { "hide_hidden", &hide_hidden },
       { "cover_size",  &cover_size },
+      { "browser_view", &browser_view },
       { "anim_speed",  &anim_speed },
     };
     unsigned valu = parseuint(value);

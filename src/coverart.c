@@ -71,7 +71,7 @@ static uint32_t use_stamp;
 static unsigned miss_next;
 
 // Build the 6x6x6 cube once. Each channel uses 6 evenly spread 5-bit levels.
-static void build_cube(void) {
+static __attribute__((noinline)) void build_cube(void) {
   static const uint8_t lvl[6] = { 0, 6, 12, 19, 25, 31 };
   for (unsigned r = 0; r < 6; r++)
     for (unsigned g = 0; g < 6; g++)
@@ -490,6 +490,12 @@ bool coverart_available(void) {
 }
 
 void coverart_draw(volatile uint8_t *frame) {
+  coverart_draw_at(frame, COVER_PANE_X, COVER_PANE_Y);
+}
+
+// ------------------------------------------------------------- Carousel ---
+
+void coverart_draw_at(volatile uint8_t *frame, unsigned x, unsigned y) {
   if (!coverart_available())
     return;
   // Re-assert our palette every frame: the logo (info tab) shares the
@@ -497,6 +503,64 @@ void coverart_draw(volatile uint8_t *frame) {
   const t_pix_ent *slot = &cache->pix[sel_slot];
   dma_memcpy16(&MEM_PALETTE[CUBE_PAL_BASE], slot->ownpal ? slot->pal : cube_pal, CUBE_NCOLORS);
   for (unsigned r = 0; r < COVER_H; r++)
-    dma_memcpy16(&frame[(COVER_PANE_Y + r) * 240 + COVER_PANE_X],
-                 &slot->pix[r * COVER_W], COVER_W / 2);
+    dma_memcpy16(&frame[(y + r) * 240 + x], &slot->pix[r * COVER_W], COVER_W / 2);
+}
+
+int coverart_peek(const char *rom_fullpath, uint32_t filesize) {
+  int slot = resolve_file(rom_fullpath, filesize, hash_str(rom_fullpath, 2166136261u), false);
+  return slot >= 0 ? slot : -1;
+}
+
+int coverart_peek_gcode(const uint8_t gcode[4]) {
+  uint32_t gc;
+  memcpy(&gc, gcode, 4);
+  int slot = resolve_gcode(gc, false);
+  return slot >= 0 ? slot : -1;
+}
+
+uint32_t coverart_slot_id(int slot) {
+  return slot >= 0 ? cache->pix[slot].gcode : 0;
+}
+
+void coverart_obj_palette(void) {
+  if (!cube_built)
+    build_cube();
+  dma_memcpy16(&MEM_PALETTE[256 + OBJ_CUBE_BASE], cube_pal, CUBE_NCOLORS);
+}
+
+// Level (0..5) of the cube closest to a 5-bit channel value.
+static inline unsigned cube_level(unsigned v) {
+  return (v * 5 + 15) / 31;
+}
+
+void coverart_thumb(int slot, volatile uint16_t *tiles) {
+  const t_pix_ent *e = &cache->pix[slot];
+  uint8_t map[CUBE_NCOLORS];
+  for (unsigned i = 0; i < CUBE_NCOLORS; i++) {
+    if (e->ownpal) {
+      unsigned c = e->pal[i];
+      map[i] = OBJ_CUBE_BASE + cube_level(c & 31) * 36 + cube_level((c >> 5) & 31) * 6 +
+               cube_level((c >> 10) & 31);
+    } else
+      map[i] = OBJ_CUBE_BASE + i;
+  }
+  // 64x32 sprite (8bpp, 1D mapping: 8x4 tiles of 8x8), picture centered.
+  const unsigned x0 = (64 - THUMB_W) / 2;
+  for (unsigned y = 0; y < THUMB_H; y++) {
+    const uint8_t *srow = &e->pix[(y * COVER_H / THUMB_H) * COVER_W];
+    for (unsigned x = 0; x < 64; x += 2) {
+      unsigned px[2];
+      for (unsigned k = 0; k < 2; k++) {
+        unsigned tx = x + k;
+        if (tx < x0 || tx >= x0 + THUMB_W)
+          px[k] = 0;
+        else {
+          unsigned v = srow[(tx - x0) * COVER_W / THUMB_W];
+          px[k] = map[MIN(v - CUBE_PAL_BASE, CUBE_NCOLORS - 1)];
+        }
+      }
+      unsigned off = (((y >> 3) * 8 + (x >> 3)) * 64 + (y & 7) * 8 + (x & 7)) / 2;
+      tiles[off] = px[0] | (px[1] << 8);
+    }
+  }
 }

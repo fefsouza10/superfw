@@ -23,7 +23,7 @@ ifeq ($(BOARD),lite)
 else ifeq ($(BOARD),sd)
   GLOBAL_DEFINES += -DSUPERCARD_FLASH_ADDRPERM
   BUNDLE_GBC_EMULATOR = 1
-  BUNDLE_VIDEO_PLAYER = 1
+  # No room left in the 512KiB flash for the video player (it needs ~6KiB).
   COMPRESS_FIRMWARE = 1
   MAXFSIZE = 512
   FWFLAVOUR = "SD"

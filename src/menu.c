@@ -47,6 +47,7 @@
 #include "res/icons.h"
 #include "res/logo.h"
 
+
 extern t_card_info sd_info;
 extern bool fastew;
 extern bool slowsd;
@@ -123,8 +124,9 @@ enum {
   UiSetASpd  = 3,
   UiSetHid   = 4,
   UiSetCover = 5,
-  UiSetSave  = 6,
-  UiSetMAX   = 6,
+  UiSetView  = 6,
+  UiSetSave  = 7,
+  UiSetMAX   = 7,
 };
 
 enum {
@@ -1429,6 +1431,166 @@ static bool is_gba_fname(const char *fn) {
   return sl >= 4 && !strcasecmp(&fn[sl - 4], ".gba");
 }
 
+
+// ------------------------------------------------------------ Carousel ---
+// DSPico-like view: the selected entry's cover in the middle, with its
+// neighbours as dimmed thumbnails (64x32 8bpp OBJs) on both sides.
+
+#define CAROUSEL_TILE(k)     (672 + 64 * (k))    // Right after the icons
+#define CAROUSEL_TEXT_Y      102
+
+static struct { int slot; uint32_t id; } carousel_thumbs[2] = { { -1, 0 }, { -1, 0 } };
+
+static void carousel_reset(void) {
+  carousel_thumbs[0].slot = carousel_thumbs[1].slot = -1;
+}
+
+// Returns whether the carousel replaces the list in the current tab.
+static bool carousel_active(void) {
+  if (!browser_view)
+    return false;
+  return smenu.menu_tab == MENUTAB_RECENT || smenu.menu_tab == MENUTAB_FAVORITES ||
+         #ifdef SUPPORT_NORGAMES
+         smenu.menu_tab == MENUTAB_NORBROWSE ||
+         #endif
+         smenu.menu_tab == MENUTAB_ROMBROWSE;
+}
+
+// In the carousel Left/Right move to the previous/next entry and Up/Down page,
+// the opposite of the list. R+Up/Down still jumps between letters.
+static unsigned carousel_keys(unsigned newkeys) {
+  unsigned out = newkeys & ~(KEY_BUTTUP | KEY_BUTTDOWN | KEY_BUTTLEFT | KEY_BUTTRIGHT);
+  if (newkeys & KEY_BUTTLEFT)  out |= KEY_BUTTUP;
+  if (newkeys & KEY_BUTTRIGHT) out |= KEY_BUTTDOWN;
+  if (modifier_keys() & KEY_BUTTR)
+    out |= newkeys & (KEY_BUTTUP | KEY_BUTTDOWN);
+  else {
+    if (newkeys & KEY_BUTTUP)   out |= KEY_BUTTLEFT;
+    if (newkeys & KEY_BUTTDOWN) out |= KEY_BUTTRIGHT;
+  }
+  return out;
+}
+
+// Draws the carousel. `peek` returns the cached cover slot of an entry (or -1)
+// and `icon` its icon, used when there is no cover.
+static void render_carousel(volatile uint8_t *frame, int sel, int cnt, bool cover_on,
+                            const char *name, const char *info,
+                            int (*peek)(int), unsigned (*icon)(int)) {
+  const unsigned bw = COVER_W, bh = COVER_H;
+  const unsigned cx = ((SCREEN_WIDTH - bw) / 2) & ~1U;
+  const unsigned cy = (18 + (COVER_MAX_H - bh) / 2) & ~1U;
+
+  if (cover_on)
+    coverart_draw_at(frame, cx, cy);
+  else
+    render_icon(SCREEN_WIDTH / 2 - 8, cy + bh / 2 - 8, icon(sel));
+  draw_box_outline(frame, cx - 2, cx + bw + 2, cy - 2, cy + bh + 2, FG_COLOR);
+
+  for (unsigned k = 0; k < 2; k++) {
+    int idx = sel + (k ? 1 : -1);
+    if (idx < 0 || idx >= cnt)
+      continue;
+    // Left edge and top of the visible thumbnail.
+    int tx = k ? (int)(cx + bw + 6) : (int)cx - 6 - THUMB_W;
+    int ty = cy + bh / 2 - THUMB_H / 2;
+    int slot = cover_size ? peek(idx) : -1;
+    if (slot >= 0) {
+      uint32_t id = coverart_slot_id(slot);
+      if (carousel_thumbs[k].slot != slot || carousel_thumbs[k].id != id) {
+        coverart_thumb(slot, (volatile uint16_t*)&MEM_VRAM_OBJS[(CAROUSEL_TILE(k) - 512) * 32]);
+        carousel_thumbs[k].slot = slot;
+        carousel_thumbs[k].id = id;
+      }
+      // 64x32, 8bpp (the picture is centered in the sprite).
+      fobjs[objnum++] = (t_oamobj){ (ty & 0xFF) | 0x6000,
+                                    ((tx - (64 - THUMB_W) / 2) & 0x1FF) | 0xC000,
+                                    CAROUSEL_TILE(k), 0 };
+    }
+    else
+      render_icon_trans(tx + THUMB_W / 2 - 8, ty + THUMB_H / 2 - 8, icon(idx));
+  }
+
+  if (font_width(name) <= SCREEN_WIDTH - 16)
+    draw_central_text(name, frame, SCREEN_WIDTH / 2, CAROUSEL_TEXT_Y);
+  else
+    draw_text_ovf_rotate(name, frame, 8, CAROUSEL_TEXT_Y, SCREEN_WIDTH - 16, &smenu.anim_state);
+  if (info)
+    draw_central_text(info, frame, SCREEN_WIDTH / 2, CAROUSEL_TEXT_Y + 18);
+}
+
+// Carousel sources for each list.
+static unsigned browser_entry_icon(const t_centry *e) {
+  return (e->attr & AM_HID) ? ((e->attr & AM_DIR) ? ICON_HFOLDER : ICON_HFILE) :
+         (e->attr & AM_DIR) ? ICON_FOLDER :
+         guessicon(e->fname);
+}
+
+static int browser_peek(int i) {
+  const t_centry *e = sdr_state->fileorder[i];
+  if ((e->attr & AM_DIR) || !is_gba_fname(e->fname))
+    return -1;
+  char fpath[512];
+  npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, e->fname);
+  return coverart_peek(fpath, e->filesize);
+}
+
+static unsigned browser_icon(int i) {
+  return browser_entry_icon(sdr_state->fileorder[i]);
+}
+
+#ifdef SUPPORT_NORGAMES
+static int norgame_peek(int i) {
+  return coverart_peek_gcode((const uint8_t*)&sdr_state->nordata.games[i].gamecode);
+}
+
+static unsigned norgame_icon(int i) {
+  (void)i;
+  return ICON_GBACART;
+}
+
+// Finds the NOR game a recent/favorite entry refers to.
+static const t_flash_game_entry *rentry_norgame(const t_rentry *e) {
+  if (!(e->flags & FLAG_RECENT_NOR))
+    return NULL;
+  for (unsigned i = 0; i < sdr_state->nordata.gamecnt; i++)
+    if (!strcmp(e->fpath, sdr_state->nordata.games[i].game_name))
+      return &sdr_state->nordata.games[i];
+  return NULL;
+}
+#endif
+
+static const t_rentry *carousel_rents;
+
+static int rlist_peek(int i) {
+  const t_rentry *e = &carousel_rents[i];
+  #ifdef SUPPORT_NORGAMES
+  if (e->flags & FLAG_RECENT_NOR) {
+    const t_flash_game_entry *fe = rentry_norgame(e);
+    return fe ? coverart_peek_gcode((const uint8_t*)&fe->gamecode) : -1;
+  }
+  #endif
+  if (!is_gba_fname(&e->fpath[e->fname_offset]))
+    return -1;
+  return coverart_peek(e->fpath, 0);
+}
+
+static unsigned rlist_icon(int i) {
+  return guessicon(&carousel_rents[i].fpath[carousel_rents[i].fname_offset]);
+}
+
+// Offers a recent/favorite entry to the cover prefetcher.
+static bool rlist_prefetch(const t_rentry *e) {
+  #ifdef SUPPORT_NORGAMES
+  if (e->flags & FLAG_RECENT_NOR) {
+    const t_flash_game_entry *fe = rentry_norgame(e);
+    return fe ? coverart_prefetch_gcode((const uint8_t*)&fe->gamecode) : false;
+  }
+  #endif
+  if (!is_gba_fname(&e->fpath[e->fname_offset]))
+    return false;
+  return coverart_prefetch(e->fpath, 0);
+}
+
 static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_rlist *st) {
   // Load the cover for the highlighted ROM (cheap unless the selection moved).
   bool cover_on = false;
@@ -1439,10 +1601,7 @@ static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_
     #ifdef SUPPORT_NORGAMES
     if (sel->flags & FLAG_RECENT_NOR) {
       // NOR entries are not SD paths, use the stored game code instead.
-      const t_flash_game_entry *fe = NULL;
-      for (unsigned i = 0; i < sdr_state->nordata.gamecnt && !fe; i++)
-        if (!strcmp(sel->fpath, sdr_state->nordata.games[i].game_name))
-          fe = &sdr_state->nordata.games[i];
+      const t_flash_game_entry *fe = rentry_norgame(sel);
       if (fe)
         coverart_update_gcode((const uint8_t*)&fe->gamecode);
       else
@@ -1453,7 +1612,31 @@ static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_
     {
       coverart_update(sel->fpath, 0, is_gba_fname(&sel->fpath[sel->fname_offset]));
     }
+    if (coverart_prefetch_ready()) {
+      // Prefetch the covers around the selection, nearest first.
+      bool busy = false;
+      for (int d = 1; d < RECENT_ROWS && !busy; d++)
+        for (int n = -d; n <= d && !busy; n += 2 * d) {
+          int i = st->selector + n;
+          if (i >= 0 && i < st->maxentries)
+            busy = rlist_prefetch(&ents[i]);
+        }
+      if (!busy)
+        coverart_prefetch_finished();
+    }
     cover_on = coverart_available();
+  }
+
+  if (browser_view) {
+    if (st->maxentries) {
+      const t_rentry *sel = &ents[st->selector];
+      char info[16];
+      npf_snprintf(info, sizeof(info), "%d/%d", st->selector + 1, st->maxentries);
+      carousel_rents = ents;
+      render_carousel(frame, st->selector, st->maxentries, cover_on,
+                      &sel->fpath[sel->fname_offset], info, rlist_peek, rlist_icon);
+    }
+    return;
   }
 
   // Render the list from memory.
@@ -1528,6 +1711,15 @@ void render_flashbrowser(volatile uint8_t *frame) {
       cover_on = coverart_available();
     }
 
+    if (browser_view) {
+      const t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
+      char szstr[16];
+      human_size(szstr, sizeof(szstr), sel->numblks * NOR_BLOCK_SIZE);
+      render_carousel(frame, smenu.fbrowser.selector, smenu.fbrowser.maxentries, cover_on,
+                      &sel->game_name[sel->bnoffset], szstr, norgame_peek, norgame_icon);
+      cover_on = false;
+    }
+    else
     for (unsigned i = 0; i < NORGAMES_ROWS; i++) {
       if (smenu.fbrowser.seloff + i >= smenu.fbrowser.maxentries)
         break;
@@ -1551,10 +1743,12 @@ void render_flashbrowser(volatile uint8_t *frame) {
         draw_text_ovf(romname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    unsigned selrowy = (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1) * 16;
-    unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
-    for (unsigned i = 0; i < hlright; i += 16)
-      render_icon_trans(i, selrowy, 63);
+    if (!browser_view) {
+      unsigned selrowy = (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1) * 16;
+      unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+      for (unsigned i = 0; i < hlright; i += 16)
+        render_icon_trans(i, selrowy, 63);
+    }
   }
 
   if (cover_on) {
@@ -1613,6 +1807,15 @@ void render_browser(volatile uint8_t *frame) {
     }
     cover_on = coverart_available();
 
+    if (browser_view) {
+      char szstr[16] = {0};
+      if (!(sel->attr & AM_DIR))
+        human_size(szstr, sizeof(szstr), sel->filesize);
+      render_carousel(frame, smenu.browser.selector, smenu.browser.dispentries, cover_on,
+                      sel->fname, szstr, browser_peek, browser_icon);
+      cover_on = false;
+    }
+    else
     for (unsigned i = 0; i < BROWSER_ROWS; i++) {
       if (smenu.browser.seloff + i >= smenu.browser.dispentries)
         break;
@@ -1620,11 +1823,7 @@ void render_browser(volatile uint8_t *frame) {
       char szstr[16] = {0};
       t_centry *e = sdr_state->fileorder[smenu.browser.seloff + i];
 
-      unsigned iconidx = (e->attr & AM_HID) ? ((e->attr & AM_DIR) ? ICON_HFOLDER : ICON_HFILE) :
-                         (e->attr & AM_DIR) ? ICON_FOLDER :
-                         guessicon(e->fname);
-
-      render_icon(2, (i+1)*16, iconidx);
+      render_icon(2, (i+1)*16, browser_entry_icon(e));
 
       // Keep rows overlapping the cover pane clear of it.
       unsigned rowy = (1 + i) * 16;
@@ -1643,10 +1842,12 @@ void render_browser(volatile uint8_t *frame) {
         draw_text_ovf(e->fname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    unsigned selrowy = (smenu.browser.selector - smenu.browser.seloff + 1) * 16;
-    unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
-    for (unsigned i = 0; i < hlright; i += 16)
-      render_icon_trans(i, selrowy, 63);
+    if (!browser_view) {
+      unsigned selrowy = (smenu.browser.selector - smenu.browser.seloff + 1) * 16;
+      unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+      for (unsigned i = 0; i < hlright; i += 16)
+        render_icon_trans(i, selrowy, 63);
+    }
   }
 
   if (cover_on) {
@@ -2252,36 +2453,41 @@ void render_settings(volatile uint8_t *frame) {
 
 void render_ui_settings(volatile uint8_t *frame) {
   const unsigned colx = 170;
-  const unsigned rowh = 18;
+  const unsigned rowh = 16;
+  const unsigned y0 = 19;
   char tmpbuf[64];
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %u >", menu_theme + 1U);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, 22, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, y0, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_LANG_NAME]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 22 + rowh*1, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + rowh*1 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, y0 + rowh*1, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*1 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 22 + rowh*2, 224);
-  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + rowh*2 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, y0 + rowh*2, 224);
+  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, y0 + rowh*2 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_UIS_SPD0 + anim_speed]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 22 + rowh*3, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + rowh*3 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, y0 + rowh*3, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*3 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + rowh*4, 224);
-  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + rowh*4 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, y0 + rowh*4, 224);
+  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, y0 + rowh*4 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_COVER_SZ1 + MIN(cover_size, 3) - 1]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, 22 + rowh*5, 224);
-  draw_central_text(cover_size ? tmpbuf : msgs[lang_id][MSG_KNOB_DISABLED], frame, colx, 22 + rowh*5 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, y0 + rowh*5, 224);
+  draw_central_text(cover_size ? tmpbuf : msgs[lang_id][MSG_KNOB_DISABLED], frame, colx, y0 + rowh*5 );
+
+  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][browser_view ? MSG_VIEW_CAROUSEL : MSG_VIEW_LIST]);
+  draw_text_ovf(msgs[lang_id][MSG_UIS_VIEW], frame, 8, y0 + rowh*6, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*6 );
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, 22 + smenu.uiset.selector * rowh, 63);
+      render_icon_trans(i, y0 + smenu.uiset.selector * rowh, 63);
 
-  draw_button_box(frame, 20, 220, 132, 152, smenu.uiset.selector == UiSetSave);
-  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 134);
+  draw_button_box(frame, 20, 220, 136, 156, smenu.uiset.selector == UiSetSave);
+  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 138);
 }
 
 void render_info(volatile uint8_t *frame) {
@@ -2476,6 +2682,9 @@ void menu_init(int sram_testres) {
   dma_memcpy16(&MEM_PALETTE[256], icons_pal, sizeof(icons_pal) / 2);
   // Generate some icons (selector)
   dma_memset16(&MEM_VRAM_OBJS[63 * 256], dup8(SEL_COLOR), 256 / 2);
+  // Color cube for the carousel thumbnails.
+  coverart_obj_palette();
+  carousel_reset();
 
   // Further setup initial video regs. BG2 is setup in the bootloader already!
   REG_WININ  = 0x0004;     // Only BG2 is enabled in Win0
@@ -3579,6 +3788,8 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + COVER_SIZE_CNT - 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view = !browser_view;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + LANG_COUNT - 1) % LANG_COUNT;
   }
@@ -3593,6 +3804,8 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view = !browser_view;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + 1) % LANG_COUNT;
   }
@@ -3606,8 +3819,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
   }
 
   // The cover cache holds images at the current size, rebuild it on changes.
-  if (cover_size != prev_cover_size && cover_size)
+  if (cover_size != prev_cover_size && cover_size) {
     coverart_init(sdr_state->covercache, cover_size);
+    carousel_reset();
+  }
 
   reload_theme(menu_theme);
 }
@@ -3775,6 +3990,9 @@ void menu_keypress(unsigned newkeys) {
       smenu.menu_tab = tab_step(smenu.menu_tab, -1);
     else if (newkeys & KEY_BUTTR)
       smenu.menu_tab = tab_step(smenu.menu_tab, 1);
+
+    if (carousel_active())
+      newkeys = carousel_keys(newkeys);
 
     if (newkeys & (KEY_BUTTL | KEY_BUTTR | KEY_BUTTUP | KEY_BUTTDOWN))
       smenu.anim_state = 0;

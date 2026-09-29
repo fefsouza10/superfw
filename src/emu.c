@@ -236,6 +236,13 @@ const t_emu_loader gbc_loaders[] = {
   { NULL, NULL },
 };
 
+// Video player: the .gbv file is appended right after the player.
+const t_emu_loader gbv_loaders[] = {
+  { "gbvplayer", NULL, 31*1024*1024 },
+  { "vfs:GBVP", NULL, 31*1024*1024 },
+  { NULL, NULL },
+};
+
 // Emulator loader table. Add entries here!
 
 const t_emu_platform emu_platforms[] = {
@@ -248,6 +255,7 @@ const t_emu_platform emu_platforms[] = {
   {"sv",  sv_loaders},
   {"ngc", ngc_loaders},
   {"pce", pce_loaders},
+  {"gbv", gbv_loaders},
   {NULL, NULL},        // End marker!
 };
 

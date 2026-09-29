@@ -34,12 +34,15 @@ jobs:
           make BOARD=${{ matrix.board }} COMPRESSION_RATIO=10
           mv superfw.gba superfw-${{ matrix.board }}.fw
           cp superfw.dldi.payload superfw-${{ matrix.board }}.dldi
+          # The standalone video player, for boards without it built in.
+          if [ -f gbvplayer.gba.bin ]; then cp gbvplayer.gba.bin gbvplayer.gba; fi
       - name: Upload firmware release
         uses: actions/upload-artifact@v4
         with:
           name: superfw-release-${{ matrix.board }}-${{ steps.slug.outputs.sha8 }}
           path: |
             superfw-${{ matrix.board }}.fw
+            gbvplayer.gba
       - name: Upload debug artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -75,12 +78,23 @@ jobs:
         with:
           pattern: 'superfw-release-*'
           path: artifacts
+      - name: Package the video converter
+        run: |
+          mkdir -p video-converter
+          cp tools/video/gbvconv.py tools/video/README.md video-converter/
+          zip -r video-converter.zip video-converter
+          # Any board that built the player works, they are identical.
+          cp "$(find artifacts -name gbvplayer.gba | head -n1)" gbvplayer.gba
       - name: Create release and upload firmware
         run: |
           gh release create "${GITHUB_REF#refs/tags/}" \
-            --title "Release ${GITHUB_REF#refs/tags/}" \
-            --notes-from-tag \
-            artifacts/**/*.fw
+            --title "SuperFW ${GITHUB_REF#refs/tags/}" \
+            --notes-file docs/fork/RELEASE_NOTES.md \
+            artifacts/**/*.fw \
+            gbvplayer.gba \
+            video-converter.zip \
+            packs/COVERS-superfw.zip \
+            packs/IMGS-superfw.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

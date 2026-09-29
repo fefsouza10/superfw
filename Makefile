@@ -23,6 +23,7 @@ ifeq ($(BOARD),lite)
 else ifeq ($(BOARD),sd)
   GLOBAL_DEFINES += -DSUPERCARD_FLASH_ADDRPERM
   BUNDLE_GBC_EMULATOR = 1
+  # No room left in the 512KiB flash for the video player (it needs ~6KiB).
   COMPRESS_FIRMWARE = 1
   MAXFSIZE = 512
   FWFLAVOUR = "SD"
@@ -30,6 +31,7 @@ else ifeq ($(BOARD),chis)
   GLOBAL_DEFINES += -DSUPPORT_NORGAMES -DSUPERCHIS_IO -DFONTS_EXT
   BUNDLE_GBC_EMULATOR = 1
   BUNDLE_OTHER_EMULATORS = 1
+  BUNDLE_VIDEO_PLAYER = 1
   # Can't be over 2MiB (hardlimit)
   MAXFSIZE = 2048
   FWFLAVOUR = "Chis"
@@ -38,6 +40,10 @@ else
 endif
 
 FWBINFILES=firmware.ewram.gba res/patches.db res/fonts.pack
+
+ifeq ($(EMU_HARNESS),1)
+  PAYLOADFLAGS += -DEMU_HARNESS
+endif
 
 ifeq ($(ENABLE_DISK_LOGGING),1)
   PAYLOADFLAGS += -DENABLE_DISK_LOGGING
@@ -59,6 +65,11 @@ ifeq ($(BUNDLE_GBC_EMULATOR),1)
   BIEMUFILES += emu/jagoombacolor_v0.5.gba.comp
 endif
 
+ifeq ($(BUNDLE_VIDEO_PLAYER),1)
+  GLOBAL_DEFINES += -DBUNDLE_VIDEO_PLAYER
+  BIEMUFILES += gbvplayer.gba.comp
+endif
+
 ifeq ($(BUNDLE_OTHER_EMULATORS),1)
   GLOBAL_DEFINES += -DBUNDLE_OTHER_EMULATOR
   BIEMUFILES += emu/pocketnes_20130701.gba.comp \
@@ -68,7 +79,7 @@ ifeq ($(BUNDLE_OTHER_EMULATORS),1)
                 emu/smsadvance-v2.5-scptch.gba.comp
 endif
 
-BASEFLAGS=$(GLOBAL_DEFINES) -mcpu=arm7tdmi -mtune=arm7tdmi
+BASEFLAGS=$(GLOBAL_DEFINES) -mcpu=arm7tdmi -mtune=arm7tdmi -fno-ipa-ra
 
 CFLAGS=-O2 -ggdb \
        $(BASEFLAGS) $(PAYLOADFLAGS) \
@@ -141,6 +152,8 @@ INFILES=src/gba_ewram_crt0.S \
         src/patches.S \
         src/menu.c \
         src/recent.c \
+        src/coverart.c \
+        src/softpatch.c \
         src/cheats.c \
         src/flash.c \
         src/sha256.c \
@@ -193,6 +206,13 @@ ingamemenu.payload:	$(MENUFILES) src/menu_messages.h
 			-nostartfiles -fno-builtin -Wl,-Map=firmware.ingame.map -Wl,--print-memory-usage
 	$(OBJCOPY) --output-target=binary ingamemenu.elf ingamemenu.payload
 
+gbvplayer.gba.bin:	gbvplayer/player.c gbvplayer/crt0.S gbvplayer/player.ld gbvplayer/font.h
+	# Video player (bundled as an emulator for .gbv files)
+	$(CC) $(BASEFLAGS) -mthumb -mthumb-interwork -O2 -Wall -ffreestanding -nostdlib -fno-builtin \
+		-fno-tree-loop-distribute-patterns -T gbvplayer/player.ld -o gbvplayer.elf \
+		gbvplayer/crt0.S gbvplayer/player.c -lgcc
+	$(OBJCOPY) --output-target=binary gbvplayer.elf gbvplayer.gba.bin
+
 ingame_trampoline.payload:	src/ingame_trampoline.S
 	$(CC) $(BASEFLAGS) -nostartfiles -T ldscripts/gba_ingametramp.ld -o ingame_trampoline.elf src/ingame_trampoline.S
 	$(OBJCOPY) --output-target=binary ingame_trampoline.elf ingame_trampoline.payload
@@ -225,5 +245,5 @@ upkr.elf:	tools/upkr.cc
 	g++ -o $@ $< -O3 -ffast-math
 
 clean:
-	rm -f ldscripts/*.i *.gba *.elf *.payload *.map res/*.comp emu/*.comp *.comp src/menu_messages.h src/messages_data.h
+	rm -f ldscripts/*.i *.gba *.gba.bin *.elf *.payload *.map res/*.comp emu/*.comp *.comp src/menu_messages.h src/messages_data.h
 

@@ -761,6 +761,15 @@ assets_start:
   .balign 4
   #endif
 
+  #ifdef BUNDLE_VIDEO_PLAYER
+  .ascii "GBVP"                                        @ Video player (.gbv files)
+  .word (gbvplayer_end - gbvplayer_start)
+  gbvplayer_start:
+    .incbin "gbvplayer.gba.comp"
+  gbvplayer_end:
+  .balign 4
+  #endif
+
   .word 0               @ End of asset list
   .word 0
 assets_end:

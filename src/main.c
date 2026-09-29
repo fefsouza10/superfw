@@ -45,6 +45,16 @@ static void wait_for_vblank() {
   while (!(REG_DISPSTAT & DISPSTAT_VBLANK));
 }
 
+extern volatile unsigned frame_count;
+
+// Same as wait_for_vblank(), but halts the CPU while waiting (saves battery).
+// Needs the V-blank IRQ to be enabled.
+static void wait_for_vblank_halt() {
+  unsigned f = frame_count;
+  while (!(REG_DISPSTAT & DISPSTAT_VBLANK) && f == frame_count)
+    asm volatile ("swi 0x02" ::: "r0", "r1", "r2", "r3", "memory");
+}
+
 void setup_video() {
   // Stop screen, clear VRAM and palette RAM.
   REG_DISPCNT = 0x80;
@@ -87,7 +97,11 @@ void setup_video() {
 
 void init_sdcard_and_mount() {
   // Init the SD card hardware
+  #ifdef EMU_HARNESS
+  unsigned ret = 0;
+  #else
   unsigned ret = sdcard_init(&sd_info);
+  #endif
   if (ret)
     fatal_init_error("Fatal SD card init err: %d", ret);
 
@@ -117,12 +131,72 @@ void check_pending_saves() {
 }
 
 volatile unsigned frame_count = 0;
+volatile uint8_t key_presses[10];     // Presses not consumed yet, per key
+static uint16_t irq_prev_rel = 0;     // Keys seen released in the previous V-blank
+static uint16_t irq_armed = 0;        // Keys released long enough to count a new press
 
 void irq_handler_fn() {
   // Clear all IRQs just in case
   REG_IF = 0xFFFF;
   // Gets called on every V-blank IRQ.
   frame_count++;
+  // Count key presses, so that short (or repeated) presses are not lost
+  // while the menu is busy (ie. loading a cover). A key must read released in
+  // two V-blanks in a row before a new press counts: worn buttons bounce, and a
+  // single released sample while the key is held used to count a second press.
+  uint16_t keys = REG_KEYINPUT ^ 0x3FF;
+  uint16_t rel = ~keys & 0x3FF;
+  irq_armed |= rel & irq_prev_rel;
+  irq_prev_rel = rel;
+  uint16_t pressed = keys & irq_armed;
+  irq_armed &= ~pressed;
+  for (unsigned i = 0; pressed; i++, pressed >>= 1)
+    if ((pressed & 1) && key_presses[i] < 4)
+      key_presses[i]++;
+}
+
+// Menu auto sleep: after some idle time, blank the screen and stop the CPU
+// until the wake up combo (same as the in-game menu sleep) is pressed.
+#define REG_KEYCNT_U16     (*((volatile uint16_t *) 0x04000132))
+#define IRQ_KEYPAD         0x1000
+
+static void menu_sleep() {
+  uint16_t dispcnt = REG_DISPCNT;
+  uint16_t wake = (~hotkey_list[sleep_combo].mask) & 0x3FF;
+
+  REG_DISPCNT = dispcnt | 0x80;         // Forced blank (LCD off)
+  REG_IME = 0;
+  REG_KEYCNT_U16 = 0xC000 | wake;       // IRQ when all keys are pressed
+  REG_IE = IRQ_KEYPAD;
+  REG_IF = 0xFFFF;
+  REG_IME = 1;
+
+  asm volatile ("swi 0x03" ::: "r0", "r1", "r2", "r3", "memory");
+
+  REG_IME = 0;
+  REG_KEYCNT_U16 = 0;
+  REG_IF = 0xFFFF;
+  REG_IE = 0x0001;
+  REG_IME = 1;
+
+  // Wait for the combo to be released and drop it, so it does not reach the menu.
+  while (REG_KEYINPUT != 0x3FF)
+    wait_for_vblank_halt();
+  for (unsigned i = 0; i < sizeof(key_presses); i++)
+    key_presses[i] = 0;
+  REG_DISPCNT = dispcnt;
+}
+
+static void check_autosleep() {
+  static unsigned last_active = 0, last_seen = 0;
+  // Long blocking tasks (ie. flashing a game) count as activity too.
+  if (REG_KEYINPUT != 0x3FF || !autosleep_opt || frame_count - last_seen > 30)
+    last_active = frame_count;
+  else if (frame_count - last_active >= autosleep_mins[autosleep_opt] * 60U * 60U) {
+    menu_sleep();
+    last_active = frame_count;
+  }
+  last_seen = frame_count;
 }
 
 uint32_t systime() {
@@ -190,9 +264,11 @@ static int main_gba() {
     unsigned cframe = frame_count;
     menu_render(frame_count - prev_frame);
 
-    wait_for_vblank();    // Avoid tearing.
+    wait_for_vblank_halt();    // Avoid tearing (CPU halted meanwhile).
     menu_flip();
     prev_frame = cframe;
+
+    check_autosleep();
   }
 
   return 0;

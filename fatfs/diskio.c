@@ -12,6 +12,21 @@
 
 #include "supercard_driver.h"
 
+#ifdef EMU_HARNESS
+// Emulator test harness (tools/emu): sector I/O through a magic register block
+// that the host-side harness intercepts. Never used on real hardware builds.
+#define EMU_DISK_REGS ((volatile uint32_t *)0x09F00000)
+static unsigned emu_disk_io(unsigned op, const void *buf, LBA_t sector, UINT count) {
+  EMU_DISK_REGS[1] = (uintptr_t)buf;
+  EMU_DISK_REGS[2] = sector;
+  EMU_DISK_REGS[3] = count;
+  EMU_DISK_REGS[0] = op;   // Triggers the transfer
+  return 0;
+}
+#define sdcard_read_blocks(b, s, c)  emu_disk_io(1, b, s, c)
+#define sdcard_write_blocks(b, s, c) emu_disk_io(2, b, s, c)
+#endif
+
 DSTATUS disk_status (BYTE pdrv) {
   return 0;
 }

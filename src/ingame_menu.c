@@ -45,6 +45,8 @@ extern uint32_t cheat_base_addr;
 extern uint32_t menu_anim_speed;
 extern uint16_t ingame_menu_palette[8];
 extern uint32_t savefile_backups;                // Num of save backups to create
+extern uint32_t sleep_wake_keys;                 // Wake up combo (KEYINPUT mask)
+extern char sleep_keys_name[];                   // Wake up combo name
 extern uint32_t scratch_base, scratch_size;      // Space to write snapshots (in memory)
 extern uint32_t spill_addr;                      // Spill buffer that gets reloaded on IGM exit
 extern char savefile_pattern[256];
@@ -599,14 +601,27 @@ void draw_popup(uint8_t *fb) {
 
 void draw_main_menu(uint8_t *fb, unsigned framen) {
   bool havess = num_mem_savestates || num_dsk_savestates;
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN0_BACK_GAME],  fb, 24, 36 + 19*0, HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN1_RESET],      fb, 24, 36 + 19*1, HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN2_FLUSH_SAVE], fb, 24, 36 + 19*2, !savefile_pattern[0] ? SH_COLOR : HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN3_SSTATE],     fb, 24, 36 + 19*3, !havess ? SH_COLOR : HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN4_RTC],        fb, 24, 36 + 19*4, !has_rtc_support ? SH_COLOR : HI_COLOR);
-  draw_text(msgs[ingame_menu_lang][IMENU_MAIN5_CHEATS],     fb, 24, 36 + 19*5, !cheat_base_addr ? SH_COLOR : HI_COLOR);
+  // Rows are 17px apart so that 7 entries fit below the logo.
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN0_BACK_GAME],  fb, 24, 36 + 17*0, HI_COLOR);
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN1_RESET],      fb, 24, 36 + 17*1, HI_COLOR);
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN2_FLUSH_SAVE], fb, 24, 36 + 17*2, !savefile_pattern[0] ? SH_COLOR : HI_COLOR);
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN3_SSTATE],     fb, 24, 36 + 17*3, !havess ? SH_COLOR : HI_COLOR);
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN4_RTC],        fb, 24, 36 + 17*4, !has_rtc_support ? SH_COLOR : HI_COLOR);
+  draw_text(msgs[ingame_menu_lang][IMENU_MAIN5_CHEATS],     fb, 24, 36 + 17*5, !cheat_base_addr ? SH_COLOR : HI_COLOR);
+  {
+    char tmp[64];
+    const char *m = msgs[ingame_menu_lang][IMENU_MAIN6_SLEEP];
+    unsigned n = 0;
+    while (*m && n < 32)
+      tmp[n++] = *m++;
+    tmp[n++] = ' '; tmp[n++] = '(';
+    for (const char *k = sleep_keys_name; *k && n < 60; k++)
+      tmp[n++] = *k;
+    tmp[n++] = ')'; tmp[n] = 0;
+    draw_text_ovf(tmp, fb, 24, 36 + 17*6, 208, HI_COLOR);
+  }
 
-  selbarpos = 36 + 19*copt;
+  selbarpos = 36 + 17*copt;
 }
 
 void draw_reset_menu(uint8_t *fb, unsigned framen) {
@@ -1057,6 +1072,42 @@ void rtckey(uint16_t keyp) {
   }
 }
 
+// Sleep mode: blank the screen and stop the CPU until the wake combo is pressed,
+// then go straight back to the game. Sound is already muted while in the menu
+// (SOUNDCNT_X is left alone, clearing it would reset the game's PSG registers).
+#define REG_KEYCNT_U16     (*((volatile uint16_t *) 0x04000132))
+#define SLEEP_WAKE_KEYS    ((~sleep_wake_keys) & 0x3FF)
+#define IRQ_KEYPAD         0x1000
+
+static void wait_keys_released() {
+  while ((~REG_KEYINPUT) & 0x3FF);
+}
+
+bool action_sleep() {
+  uint16_t ie = REG_IE, keycnt = REG_KEYCNT_U16;
+  uint16_t dispcnt = REG_DISPCNT;
+
+  wait_keys_released();
+
+  REG_DISPCNT = dispcnt | 0x80;         // Forced blank (LCD off)
+  REG_KEYCNT_U16 = 0xC000 | SLEEP_WAKE_KEYS;   // IRQ when all keys are pressed
+  REG_IE = IRQ_KEYPAD;
+  REG_IF = IRQ_KEYPAD;
+
+  // BIOS Stop: stays in very low power mode until the keypad IRQ fires.
+  asm volatile ("swi 0x03" ::: "r0", "r1", "r2", "r3", "memory");
+
+  REG_IF = IRQ_KEYPAD;
+  REG_KEYCNT_U16 = keycnt;
+  REG_IE = ie;
+
+  // Do not leak the wake up combo into the game.
+  wait_keys_released();
+  REG_DISPCNT = dispcnt;
+
+  return true;   // Resume the game
+}
+
 bool action_write_rtc() {
   // Write to the emulated RTC register
   set_undef_lrsp(date2timestamp(&rtc_date), rtc_speed);
@@ -1076,6 +1127,7 @@ const menu_action_fn mainacts[] = {
   action_sstate_menu,
   action_rtc_menu,
   action_cheats_menu,
+  action_sleep,
 };
 const menu_action_fn resetacts[] = {
   action_reset_game,
@@ -1122,7 +1174,7 @@ typedef struct {
 } t_menu_def;
 
 const t_menu_def menudata [] = {
-  { draw_main_menu,   mainacts,   NULL,   6, NULL,  true },
+  { draw_main_menu,   mainacts,   NULL,   7, NULL,  true },
   { draw_reset_menu,  resetacts,  NULL,   4, NULL,  true },
   { draw_save_menu,   saveacts,   NULL,   4, NULL,  true },
   { draw_states_menu, statesacts, sstkey, 3, NULL,  true },

@@ -18,6 +18,9 @@
 
 #include <string.h>
 
+// The menu is not speed critical, optimize it for size (EWRAM is scarce).
+#pragma GCC optimize ("Os")
+
 #include "compiler.h"
 #include "gbahw.h"
 #include "patchengine.h"
@@ -38,9 +41,12 @@
 #include "flash.h"
 #include "sha256.h"
 #include "supercard_driver.h"
+#include "coverart.h"
+#include "softpatch.h"
 
 #include "res/icons.h"
 #include "res/logo.h"
+
 
 extern t_card_info sd_info;
 extern bool fastew;
@@ -48,6 +54,7 @@ extern bool slowsd;
 
 enum {
   MENUTAB_RECENT,        // Browses recently loaded ROMs (can be disabled / hidden)
+  MENUTAB_FAVORITES,     // Browses favorite ROMs (hidden while empty)
   MENUTAB_ROMBROWSE,     // Browses ROMs and launches games.
   #ifdef SUPPORT_NORGAMES
   MENUTAB_NORBROWSE,     // Browses Flash games and launches them.
@@ -72,13 +79,26 @@ enum {
   POPUP_SAVFILE,               // Load/Store a SAV file
   POPUP_FWFLASH,               // Flash a new firmware image
   POPUP_FILE_MGR,              // Write ROM to flash, delete, hide/unhide...
+  POPUP_SEARCH,                // Search files by name (on-screen keyboard)
 #ifdef SUPPORT_NORGAMES
   POPUP_GBA_NORWRITE,          // Write a GBA ROM to NOR
   POPUP_GBA_NORLOAD,           // Launch a NOR game
 #endif
 };
 
+static uint32_t lr_mods = 0;        // See get_keypress()
+
+// L/R being used as modifiers for the keys returned by the last get_keypress().
+static inline uint32_t modifier_keys(void) {
+  return lr_mods;
+}
+
 #define BROWSER_ROWS                 8
+#define SEARCH_MAXLEN               16
+#define SEARCH_COLS                 10
+#define SEARCH_KEYS                 40
+// On-screen keyboard: '_' is a space and '<' deletes a character.
+static const char search_keys[SEARCH_KEYS + 1] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'_<";
 #define RECENT_ROWS                  9
 #define NORGAMES_ROWS                8
 
@@ -103,8 +123,10 @@ enum {
   UiSetRect  = 2,
   UiSetASpd  = 3,
   UiSetHid   = 4,
-  UiSetSave  = 5,
-  UiSetMAX   = 5,
+  UiSetCover = 5,
+  UiSetView  = 6,
+  UiSetSave  = 7,
+  UiSetMAX   = 7,
 };
 
 enum {
@@ -122,6 +144,8 @@ enum {
 enum {
   SettTitle1 = 0,
   SettHotkey,
+  SettSleepKeys,
+  SettAutoSleep,
   SettBootType,
   SettFastSD,
   #ifdef SUPPORT_NORGAMES
@@ -204,6 +228,7 @@ enum {
 enum {
   FiMgrDelete,
   FiMgrHide,
+  FiMgrFavorite,
 #ifdef SUPPORT_NORGAMES
   FiMgrWriteNOR,
 #endif
@@ -243,7 +268,16 @@ typedef struct {
   bool use_dsaving;                   // Whether we use direct-saving mode
   bool ingame_menu_enabled;           // Enable the in-game menu.
   bool rtc_patch_enabled;             // Patch for RTC workarounds.
+  // IPS/UPS/BPS patch next to the ROM
+  t_softpatch spatch;
+  bool spatch_found;                  // A patch file exists
+  bool spatch_on;                     // Apply it while loading
 } t_load_gba_info;
+
+// ROM size once loaded (soft-patches might grow it).
+static uint32_t eff_romfs(const t_load_gba_info *info) {
+  return info->spatch_on ? MAX(info->romfs, info->spatch.tsize) : info->romfs;
+}
 
 typedef struct {
   // Save read/write policies and info
@@ -263,18 +297,22 @@ typedef struct {
 typedef void (*t_mrender_fn)(volatile uint8_t *frame);
 typedef void (*t_mkeyupd_fn)(unsigned newkeys);
 
+// Position/size of a recent/favorites style list
+typedef struct {
+  int selector;                   // Pointed file offset
+  int seloff;                     // Entry at the top of the list
+  int maxentries;                 // Total entry count
+} t_rlist;
+
 // Info and state for the menu tab
 static struct {
   uint8_t menu_tab;
 
   unsigned anim_state;            // Animation (text rotation) status.
 
-  // Recent ROMs state
-  struct {
-    int selector;                 // Pointed file offset
-    int seloff;                   // Entry at the top of the list
-    int maxentries;               // Total file/dir count in current dir
-  } recent;
+  // Recent and favorite ROMs state
+  t_rlist recent;
+  t_rlist favs;
 
   // ROM browser state
   struct {
@@ -377,6 +415,13 @@ static struct {
       char fn[MAX_FN_LEN];
       unsigned fs;
     } pdb_ld;
+
+    // File search (SD browser)
+    struct {
+      char q[SEARCH_MAXLEN + 1];          // Query (upper case ASCII)
+      int match;                          // Current match (browser index) or -1
+      int count;                          // Number of matches
+    } search;
   } p;
 } spop;
 
@@ -393,7 +438,7 @@ _Static_assert (sizeof(t_centry) % 4 == 0, "t_centry must be word-friendly");
 //  - Scratch area 2MiB (for FW updates)
 //  - File list order (~64KiB)
 //  - Browser file information (~13MB)
-//  - Recently played ROMs table (~64KiB)
+//  - Recently played and favorite ROMs tables (~64KiB each)
 //  - Font data (placed by the bootloader at the 15..16MB range)
 // At the end of the SDRAM, ro-data can be loaded by the loader.
 #define scratch_mem_size (2*1024*1024)
@@ -402,7 +447,9 @@ typedef struct {
   t_centry *fileorder[BROWSER_MAXFN_CNT];
   t_centry fentries[BROWSER_MAXFN_CNT];
   t_rentry rentries[RECENT_MAXFN_CNT];
+  t_rentry favorites[RECENT_MAXFN_CNT];
   t_reg_entry_max nordata;
+  uint8_t covercache[COVER_CACHE_SIZE] __attribute__((aligned(4)));
 } t_sdram_state;
 
 _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't exceed 14.5MB");
@@ -410,10 +457,14 @@ _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't 
 t_sdram_state *sdr_state = (t_sdram_state*)0x08000000;
 uint8_t *hiscratch = (uint8_t*)ROM_HISCRATCH_U8;
 
+// Laid out as an OAM entry, so the list can be DMA'ed straight into OAM.
 typedef struct {
-  uint16_t x, y;
-  unsigned tn;
+  uint16_t attr0;   // Y position and flags
+  uint16_t attr1;   // X position and size
+  uint16_t attr2;   // Tile number
+  uint16_t attr3;   // Affine parameter (unused, zero)
 } t_oamobj;
+_Static_assert (sizeof(t_oamobj) == 8, "t_oamobj must match an OAM entry");
 
 static bool enable_flashing = false;
 static unsigned framen = 0;
@@ -619,9 +670,9 @@ bool ingame_menu_avail_sdram(const t_load_gba_info *info) {
   const unsigned igm_reqsz = ROUND_UP2(ingame_menu_payload.menu_rsize + font_block_size() + spop.p.load.l.cheats_size, 1024);
 
   // If the ROM is too big, must use some hole to load the menu.
-  if (info->romfs > MAX_GBA_ROM_SIZE - igm_reqsz) {
+  if (eff_romfs(info) > MAX_GBA_ROM_SIZE - igm_reqsz) {
     // Discard holes that are too small, or not well formed.
-    if (!p || p->hole_size < igm_reqsz || p->hole_addr + p->hole_size > info->romfs)
+    if (!p || p->hole_size < igm_reqsz || p->hole_addr + p->hole_size > info->romfs || info->spatch_on)
       return false;   // Too big to fit the menu!
   }
 
@@ -648,8 +699,8 @@ bool dirsav_avail_sdram(const t_load_gba_info *info) {
   const t_patch *p = get_game_patch(info);
 
   // Check if there's enough space for it! (Placing it at the end).
-  if (info->romfs > MAX_GBA_ROM_SIZE - DIRSAVE_REQ_SPACE) {
-    if (!p || p->hole_size < DIRSAVE_REQ_SPACE || p->hole_addr + p->hole_size > info->romfs)
+  if (eff_romfs(info) > MAX_GBA_ROM_SIZE - DIRSAVE_REQ_SPACE) {
+    if (!p || p->hole_size < DIRSAVE_REQ_SPACE || p->hole_addr + p->hole_size > info->romfs || info->spatch_on)
       return false;   // Too big to fit!
   }
 
@@ -692,6 +743,10 @@ static bool prepare_gba_info(
   for (unsigned i = 0; i < 4; i++)
     info->gcode[i] = isascii(info->romh.gcode[i]) ? info->romh.gcode[i] : 0x1A;
   info->gcode[4] = 0;
+
+  // Soft-patches are only applied when loading to SDRAM.
+  info->spatch_found = load_sdram && softpatch_find(fn, fs, &info->spatch);
+  info->spatch_on = info->spatch_found && info->spatch.valid;
 
   // Look up patches, have them handy.
   uint8_t gamecode[5] = {
@@ -958,20 +1013,59 @@ unsigned guess_file_type(const uint8_t *header) {
   return FileTypeUnknown;
 }
 
+// Recent and favorites tabs are only shown when they have entries.
+static bool tab_visible(int tab) {
+  if (tab == MENUTAB_RECENT)
+    return recent_menu && smenu.recent.maxentries;
+  if (tab == MENUTAB_FAVORITES)
+    return smenu.favs.maxentries;
+  return true;
+}
+
+// Next visible tab in the given direction (or the same tab if there's none).
+static int tab_step(int tab, int dir) {
+  for (int t = tab + dir; t >= 0 && t < MENUTAB_MAX; t += dir)
+    if (tab_visible(t))
+      return t;
+  return tab;
+}
+
 static bool insert_recent_flush(const char *fn, unsigned flags) {
   // Insert element.
   smenu.recent.maxentries = insert_recent_fn(sdr_state->rentries, smenu.recent.maxentries, fn, flags);
-  return recent_flush(sdr_state->rentries, smenu.recent.maxentries);
+  return recent_flush(RECENT_FILEPATH, sdr_state->rentries, smenu.recent.maxentries);
 }
 
-static bool delete_recent_flush(unsigned entry_num) {
-  smenu.recent.maxentries = delete_recent(sdr_state->rentries, smenu.recent.maxentries, entry_num);
+// Removes an entry from the recent or favorites list and flushes it to disk.
+static bool delete_rlist_flush(t_rentry *ents, t_rlist *st, const char *fpath, unsigned entry_num) {
+  st->maxentries = delete_recent(ents, st->maxentries, entry_num);
+  st->selector = MAX(0, MIN(st->maxentries - 1, st->selector));
 
-  smenu.recent.selector = MIN(smenu.recent.maxentries - 1, smenu.recent.selector);
-  if (!smenu.recent.maxentries)
+  if (!tab_visible(smenu.menu_tab))
     smenu.menu_tab = MENUTAB_ROMBROWSE;
 
-  return recent_flush(sdr_state->rentries, smenu.recent.maxentries);
+  return recent_flush(fpath, ents, st->maxentries);
+}
+
+static int find_favorite(const char *fn, unsigned flags) {
+  for (int i = 0; i < smenu.favs.maxentries; i++)
+    if (sdr_state->favorites[i].flags == flags && !strcmp(sdr_state->favorites[i].fpath, fn))
+      return i;
+  return -1;
+}
+
+// Adds or removes a game from the favorites list, reporting the result.
+static void toggle_favorite(const char *fn, unsigned flags) {
+  int idx = find_favorite(fn, flags);
+  bool ok;
+  if (idx >= 0)
+    ok = delete_rlist_flush(sdr_state->favorites, &smenu.favs, FAVORITES_FILEPATH, idx);
+  else {
+    smenu.favs.maxentries = insert_recent_fn(sdr_state->favorites, smenu.favs.maxentries, fn, flags);
+    ok = recent_flush(FAVORITES_FILEPATH, sdr_state->favorites, smenu.favs.maxentries);
+  }
+
+  spop.alert_msg = msgs[lang_id][!ok ? MSG_ERR_GENERIC : idx >= 0 ? MSG_OK_FAVDEL : MSG_OK_FAVADD];
 }
 
 static void recent_reload() {
@@ -979,13 +1073,19 @@ static void recent_reload() {
   smenu.recent.seloff = 0;
   smenu.anim_state = 0;
   smenu.recent.maxentries = recent_load(RECENT_FILEPATH, sdr_state->rentries);
+  memset(&smenu.favs, 0, sizeof(smenu.favs));
+  smenu.favs.maxentries = recent_load(FAVORITES_FILEPATH, sdr_state->favorites);
 }
 
 void start_emu_game(const t_emu_loader *ldinfo, const char *fn, uint32_t fs) {
   // Load: Sav/Reset Save: Reboot/Disable
   sram_filename_calc(fn, spop.p.load.l.savefn, save_path_default);
   t_sram_load_policy lp = check_file_exists(spop.p.load.l.savefn) ? SaveLoadSav : SaveLoadReset;
-  unsigned errsave = prepare_sram_based_savegame(lp, SaveReboot, spop.p.load.l.savefn);
+  // Videos do not save anything.
+  const char *ext = find_extension(fn);
+  bool isvideo = ext && !strcasecmp(ext, "gbv");
+  unsigned errsave = isvideo ? prepare_sram_based_savegame(SaveLoadDisable, SaveDisable, spop.p.load.l.savefn) :
+                               prepare_sram_based_savegame(lp, SaveReboot, spop.p.load.l.savefn);
   if (errsave) {
     unsigned errmsg = (errsave == ERR_SAVE_BADSAVE)   ? MSG_ERR_SAVERD :
                                                         MSG_ERR_SAVEWR;
@@ -1170,11 +1270,13 @@ static void flashbrowser_reload() {
 }
 
 static inline void render_icon(unsigned x, unsigned y, unsigned iconn) {
-  fobjs[objnum++] = (t_oamobj){x, y, 8*iconn };
+  // 256 entries palette, 16x16 size, OBJ tiles start at 512 in Mode 4.
+  fobjs[objnum++] = (t_oamobj){ y | 0x2000, x | 0x4000, 8*iconn + 512, 0 };
 }
 
 static inline void render_icon_trans(unsigned x, unsigned y, unsigned iconn) {
-  fobjs[objnum++] = (t_oamobj){x, y | 0x0400, 8*iconn };
+  // Same as above, but semi-transparent.
+  fobjs[objnum++] = (t_oamobj){ y | 0x2400, x | 0x4000, 8*iconn + 512, 0 };
 }
 
 // Guess the file type based on the file name.
@@ -1324,26 +1426,257 @@ static void draw_central_text_wrapped(const char *t, volatile uint8_t *frame, un
   }
 }
 
-void render_recent(volatile uint8_t *frame) {
-  // Render the list from memory.
-  for (unsigned i = 0; i < RECENT_ROWS; i++) {
-    if (smenu.recent.seloff + i >= smenu.recent.maxentries)
-      break;
+static bool is_gba_fname(const char *fn) {
+  unsigned sl = strlen(fn);
+  return sl >= 4 && !strcasecmp(&fn[sl - 4], ".gba");
+}
 
-    t_rentry *e = &sdr_state->rentries[smenu.recent.seloff + i];
-    char *fn = &e->fpath[e->fname_offset];
-    render_icon(2, (i+1)*16, guessicon(fn));
 
-    // Animate the row entries if they are too long!
-    if (i == smenu.recent.selector - smenu.recent.seloff)
-      draw_text_ovf_rotate(fn, frame, 20, (1 + i) * 16,
-                           SCREEN_WIDTH - 24, &smenu.anim_state);
+// ------------------------------------------------------------ Carousel ---
+// DSPico-like view: the selected entry's cover in the middle, with its
+// neighbours as dimmed thumbnails (64x32 8bpp OBJs) on both sides.
+
+#define CAROUSEL_TILE(k)     (672 + 64 * (k))    // Right after the icons
+#define CAROUSEL_TEXT_Y      102
+
+static struct { int slot; uint32_t id; } carousel_thumbs[2] = { { -1, 0 }, { -1, 0 } };
+
+static void carousel_reset(void) {
+  carousel_thumbs[0].slot = carousel_thumbs[1].slot = -1;
+}
+
+// Returns whether the carousel replaces the list in the current tab.
+static bool carousel_active(void) {
+  if (!browser_view)
+    return false;
+  return smenu.menu_tab == MENUTAB_RECENT || smenu.menu_tab == MENUTAB_FAVORITES ||
+         #ifdef SUPPORT_NORGAMES
+         smenu.menu_tab == MENUTAB_NORBROWSE ||
+         #endif
+         smenu.menu_tab == MENUTAB_ROMBROWSE;
+}
+
+// In the carousel Left/Right move to the previous/next entry and Up/Down page,
+// the opposite of the list. R+Up/Down still jumps between letters.
+static unsigned carousel_keys(unsigned newkeys) {
+  unsigned out = newkeys & ~(KEY_BUTTUP | KEY_BUTTDOWN | KEY_BUTTLEFT | KEY_BUTTRIGHT);
+  if (newkeys & KEY_BUTTLEFT)  out |= KEY_BUTTUP;
+  if (newkeys & KEY_BUTTRIGHT) out |= KEY_BUTTDOWN;
+  if (modifier_keys() & KEY_BUTTR)
+    out |= newkeys & (KEY_BUTTUP | KEY_BUTTDOWN);
+  else {
+    if (newkeys & KEY_BUTTUP)   out |= KEY_BUTTLEFT;
+    if (newkeys & KEY_BUTTDOWN) out |= KEY_BUTTRIGHT;
+  }
+  return out;
+}
+
+// Draws the carousel. `peek` returns the cached cover slot of an entry (or -1)
+// and `icon` its icon, used when there is no cover.
+static void render_carousel(volatile uint8_t *frame, int sel, int cnt, bool cover_on,
+                            const char *name, const char *info,
+                            int (*peek)(int), unsigned (*icon)(int)) {
+  const unsigned bw = COVER_W, bh = COVER_H;
+  const unsigned cx = ((SCREEN_WIDTH - bw) / 2) & ~1U;
+  const unsigned cy = (18 + (COVER_MAX_H - bh) / 2) & ~1U;
+
+  if (cover_on)
+    coverart_draw_at(frame, cx, cy);
+  else
+    render_icon(SCREEN_WIDTH / 2 - 8, cy + bh / 2 - 8, icon(sel));
+  draw_box_outline(frame, cx - 2, cx + bw + 2, cy - 2, cy + bh + 2, FG_COLOR);
+
+  for (unsigned k = 0; k < 2; k++) {
+    int idx = sel + (k ? 1 : -1);
+    if (idx < 0 || idx >= cnt)
+      continue;
+    // Left edge and top of the visible thumbnail.
+    int tx = k ? (int)(cx + bw + 6) : (int)cx - 6 - THUMB_W;
+    int ty = cy + bh / 2 - THUMB_H / 2;
+    int slot = cover_size ? peek(idx) : -1;
+    if (slot >= 0) {
+      uint32_t id = coverart_slot_id(slot);
+      if (carousel_thumbs[k].slot != slot || carousel_thumbs[k].id != id) {
+        coverart_thumb(slot, (volatile uint16_t*)&MEM_VRAM_OBJS[(CAROUSEL_TILE(k) - 512) * 32]);
+        carousel_thumbs[k].slot = slot;
+        carousel_thumbs[k].id = id;
+      }
+      // 64x32, 8bpp (the picture is centered in the sprite).
+      fobjs[objnum++] = (t_oamobj){ (ty & 0xFF) | 0x6000,
+                                    ((tx - (64 - THUMB_W) / 2) & 0x1FF) | 0xC000,
+                                    CAROUSEL_TILE(k), 0 };
+    }
     else
-      draw_text_ovf(fn, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 24);
+      render_icon_trans(tx + THUMB_W / 2 - 8, ty + THUMB_H / 2 - 8, icon(idx));
   }
 
-  for (unsigned i = 0; i < 240; i += 16)
-    render_icon_trans(i, (smenu.recent.selector - smenu.recent.seloff + 1)*16, 63);
+  if (font_width(name) <= SCREEN_WIDTH - 16)
+    draw_central_text(name, frame, SCREEN_WIDTH / 2, CAROUSEL_TEXT_Y);
+  else
+    draw_text_ovf_rotate(name, frame, 8, CAROUSEL_TEXT_Y, SCREEN_WIDTH - 16, &smenu.anim_state);
+  if (info)
+    draw_central_text(info, frame, SCREEN_WIDTH / 2, CAROUSEL_TEXT_Y + 18);
+}
+
+// Carousel sources for each list.
+static unsigned browser_entry_icon(const t_centry *e) {
+  return (e->attr & AM_HID) ? ((e->attr & AM_DIR) ? ICON_HFOLDER : ICON_HFILE) :
+         (e->attr & AM_DIR) ? ICON_FOLDER :
+         guessicon(e->fname);
+}
+
+static int browser_peek(int i) {
+  const t_centry *e = sdr_state->fileorder[i];
+  if ((e->attr & AM_DIR) || !is_gba_fname(e->fname))
+    return -1;
+  char fpath[512];
+  npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, e->fname);
+  return coverart_peek(fpath, e->filesize);
+}
+
+static unsigned browser_icon(int i) {
+  return browser_entry_icon(sdr_state->fileorder[i]);
+}
+
+#ifdef SUPPORT_NORGAMES
+static int norgame_peek(int i) {
+  return coverart_peek_gcode((const uint8_t*)&sdr_state->nordata.games[i].gamecode);
+}
+
+static unsigned norgame_icon(int i) {
+  (void)i;
+  return ICON_GBACART;
+}
+
+// Finds the NOR game a recent/favorite entry refers to.
+static const t_flash_game_entry *rentry_norgame(const t_rentry *e) {
+  if (!(e->flags & FLAG_RECENT_NOR))
+    return NULL;
+  for (unsigned i = 0; i < sdr_state->nordata.gamecnt; i++)
+    if (!strcmp(e->fpath, sdr_state->nordata.games[i].game_name))
+      return &sdr_state->nordata.games[i];
+  return NULL;
+}
+#endif
+
+static const t_rentry *carousel_rents;
+
+static int rlist_peek(int i) {
+  const t_rentry *e = &carousel_rents[i];
+  #ifdef SUPPORT_NORGAMES
+  if (e->flags & FLAG_RECENT_NOR) {
+    const t_flash_game_entry *fe = rentry_norgame(e);
+    return fe ? coverart_peek_gcode((const uint8_t*)&fe->gamecode) : -1;
+  }
+  #endif
+  if (!is_gba_fname(&e->fpath[e->fname_offset]))
+    return -1;
+  return coverart_peek(e->fpath, 0);
+}
+
+static unsigned rlist_icon(int i) {
+  return guessicon(&carousel_rents[i].fpath[carousel_rents[i].fname_offset]);
+}
+
+// Offers a recent/favorite entry to the cover prefetcher.
+static bool rlist_prefetch(const t_rentry *e) {
+  #ifdef SUPPORT_NORGAMES
+  if (e->flags & FLAG_RECENT_NOR) {
+    const t_flash_game_entry *fe = rentry_norgame(e);
+    return fe ? coverart_prefetch_gcode((const uint8_t*)&fe->gamecode) : false;
+  }
+  #endif
+  if (!is_gba_fname(&e->fpath[e->fname_offset]))
+    return false;
+  return coverart_prefetch(e->fpath, 0);
+}
+
+static void render_rlist(volatile uint8_t *frame, const t_rentry *ents, const t_rlist *st) {
+  // Load the cover for the highlighted ROM (cheap unless the selection moved).
+  bool cover_on = false;
+  if (!st->maxentries || !cover_size)
+    coverart_invalidate();
+  else {
+    const t_rentry *sel = &ents[st->selector];
+    #ifdef SUPPORT_NORGAMES
+    if (sel->flags & FLAG_RECENT_NOR) {
+      // NOR entries are not SD paths, use the stored game code instead.
+      const t_flash_game_entry *fe = rentry_norgame(sel);
+      if (fe)
+        coverart_update_gcode((const uint8_t*)&fe->gamecode);
+      else
+        coverart_update(sel->fpath, 0, false);
+    }
+    else
+    #endif
+    {
+      coverart_update(sel->fpath, 0, is_gba_fname(&sel->fpath[sel->fname_offset]));
+    }
+    if (coverart_prefetch_ready()) {
+      // Prefetch the covers around the selection, nearest first.
+      bool busy = false;
+      for (int d = 1; d < RECENT_ROWS && !busy; d++)
+        for (int n = -d; n <= d && !busy; n += 2 * d) {
+          int i = st->selector + n;
+          if (i >= 0 && i < st->maxentries)
+            busy = rlist_prefetch(&ents[i]);
+        }
+      if (!busy)
+        coverart_prefetch_finished();
+    }
+    cover_on = coverart_available();
+  }
+
+  if (browser_view) {
+    if (st->maxentries) {
+      const t_rentry *sel = &ents[st->selector];
+      char info[16];
+      npf_snprintf(info, sizeof(info), "%d/%d", st->selector + 1, st->maxentries);
+      carousel_rents = ents;
+      render_carousel(frame, st->selector, st->maxentries, cover_on,
+                      &sel->fpath[sel->fname_offset], info, rlist_peek, rlist_icon);
+    }
+    return;
+  }
+
+  // Render the list from memory.
+  for (unsigned i = 0; i < RECENT_ROWS; i++) {
+    if (st->seloff + i >= st->maxentries)
+      break;
+
+    const t_rentry *e = &ents[st->seloff + i];
+    const char *fn = &e->fpath[e->fname_offset];
+    render_icon(2, (i+1)*16, guessicon(fn));
+
+    // Keep rows overlapping the cover pane clear of it.
+    unsigned rowy = (1 + i) * 16;
+    unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
+
+    // Animate the row entries if they are too long!
+    if (i == st->selector - st->seloff)
+      draw_text_ovf_rotate(fn, frame, 20, rowy, rmax - 24, &smenu.anim_state);
+    else
+      draw_text_ovf(fn, frame, 20, rowy, rmax - 24);
+  }
+
+  unsigned selrowy = (st->selector - st->seloff + 1) * 16;
+  unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+  for (unsigned i = 0; i < hlright; i += 16)
+    render_icon_trans(i, selrowy, 63);
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
+  }
+}
+
+void render_recent(volatile uint8_t *frame) {
+  render_rlist(frame, sdr_state->rentries, &smenu.recent);
+}
+
+void render_favorites(volatile uint8_t *frame) {
+  render_rlist(frame, sdr_state->favorites, &smenu.favs);
 }
 
 #ifdef SUPPORT_NORGAMES
@@ -1351,10 +1684,42 @@ void render_flashbrowser(volatile uint8_t *frame) {
   // Render bar below to show block info
   dma_memset16(&frame[240*144], dup8(FG_COLOR), 240*16/2);
 
+  bool cover_on = false;
+
   // Render the list from memory.
-  if (!smenu.fbrowser.maxentries)
+  if (!smenu.fbrowser.maxentries) {
+    coverart_invalidate();
     draw_central_text(msgs[lang_id][MSG_NOR_EMPTY], frame, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-8);
+  }
   else {
+    // Flash games store their game code, so the cover loads without a file read.
+    if (cover_size) {
+      t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
+      coverart_update_gcode((const uint8_t*)&sel->gamecode);
+      if (coverart_prefetch_ready()) {
+        // Prefetch the covers around the selection, nearest first.
+        bool busy = false;
+        for (int d = 1; d < NORGAMES_ROWS && !busy; d++)
+          for (int n = -d; n <= d && !busy; n += 2 * d) {
+            int i = smenu.fbrowser.selector + n;
+            if (i >= 0 && i < smenu.fbrowser.maxentries)
+              busy = coverart_prefetch_gcode((const uint8_t*)&sdr_state->nordata.games[i].gamecode);
+          }
+        if (!busy)
+          coverart_prefetch_finished();
+      }
+      cover_on = coverart_available();
+    }
+
+    if (browser_view) {
+      const t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
+      char szstr[16];
+      human_size(szstr, sizeof(szstr), sel->numblks * NOR_BLOCK_SIZE);
+      render_carousel(frame, smenu.fbrowser.selector, smenu.fbrowser.maxentries, cover_on,
+                      &sel->game_name[sel->bnoffset], szstr, norgame_peek, norgame_icon);
+      cover_on = false;
+    }
+    else
     for (unsigned i = 0; i < NORGAMES_ROWS; i++) {
       if (smenu.fbrowser.seloff + i >= smenu.fbrowser.maxentries)
         break;
@@ -1362,22 +1727,34 @@ void render_flashbrowser(volatile uint8_t *frame) {
       const t_flash_game_entry *e = &sdr_state->nordata.games[smenu.fbrowser.seloff + i];
       render_icon(2, (i+1)*16, ICON_GBACART);
 
-      // Animate the row entries if they are too long!
+      unsigned rowy = (1 + i) * 16;
+      unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
+
       char szstr[16];
       human_size(szstr, sizeof(szstr), e->numblks * NOR_BLOCK_SIZE);
-      draw_rightj_text(szstr, frame, SCREEN_WIDTH - 2, (1 + i) * 16);
+      draw_rightj_text(szstr, frame, rmax - 2, rowy);
 
       // Animate the row entries if they are too long!
       const char *romname = &e->game_name[e->bnoffset];
       if (i == smenu.fbrowser.selector - smenu.fbrowser.seloff)
-        draw_text_ovf_rotate(romname, frame, 20, (1 + i) * 16,
-                             SCREEN_WIDTH - 26 - font_width(szstr), &smenu.anim_state);
+        draw_text_ovf_rotate(romname, frame, 20, rowy,
+                             rmax - 26 - font_width(szstr), &smenu.anim_state);
       else
-        draw_text_ovf(romname, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 26 - font_width(szstr));
+        draw_text_ovf(romname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1)*16, 63);
+    if (!browser_view) {
+      unsigned selrowy = (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1) * 16;
+      unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+      for (unsigned i = 0; i < hlright; i += 16)
+        render_icon_trans(i, selrowy, 63);
+    }
+  }
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
   }
 
   char tmp[32], tmp1[32], tmp2[32];
@@ -1395,9 +1772,50 @@ void render_browser(volatile uint8_t *frame) {
   // Render bar below to show path URI
   dma_memset16(&frame[240*144], dup8(FG_COLOR), 240*16/2);
 
-  if (!smenu.browser.dispentries)
+  bool cover_on = false;
+
+  if (!smenu.browser.dispentries) {
+    coverart_invalidate();
     draw_central_text(msgs[lang_id][MSG_BROW_EMPTY], frame, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-8);
+  }
   else {
+    // Load the cover/title-screen for the highlighted ROM.
+    t_centry *sel = sdr_state->fileorder[smenu.browser.selector];
+    if (!cover_size)
+      coverart_invalidate();
+    else {
+      char fpath[512];
+      npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, sel->fname);
+      coverart_update(fpath, sel->filesize, !(sel->attr & AM_DIR) && is_gba_fname(sel->fname));
+      if (coverart_prefetch_ready()) {
+        // Prefetch the covers around the selection, nearest first.
+        bool busy = false;
+        for (int d = 1; d < BROWSER_ROWS && !busy; d++)
+          for (int n = -d; n <= d && !busy; n += 2 * d) {
+            int i = smenu.browser.selector + n;
+            if (i < 0 || i >= smenu.browser.dispentries)
+              continue;
+            const t_centry *e = sdr_state->fileorder[i];
+            if (!(e->attr & AM_DIR) && is_gba_fname(e->fname)) {
+              npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, e->fname);
+              busy = coverart_prefetch(fpath, e->filesize);
+            }
+          }
+        if (!busy)
+          coverart_prefetch_finished();
+      }
+    }
+    cover_on = coverart_available();
+
+    if (browser_view) {
+      char szstr[16] = {0};
+      if (!(sel->attr & AM_DIR))
+        human_size(szstr, sizeof(szstr), sel->filesize);
+      render_carousel(frame, smenu.browser.selector, smenu.browser.dispentries, cover_on,
+                      sel->fname, szstr, browser_peek, browser_icon);
+      cover_on = false;
+    }
+    else
     for (unsigned i = 0; i < BROWSER_ROWS; i++) {
       if (smenu.browser.seloff + i >= smenu.browser.dispentries)
         break;
@@ -1405,27 +1823,37 @@ void render_browser(volatile uint8_t *frame) {
       char szstr[16] = {0};
       t_centry *e = sdr_state->fileorder[smenu.browser.seloff + i];
 
-      unsigned iconidx = (e->attr & AM_HID) ? ((e->attr & AM_DIR) ? ICON_HFOLDER : ICON_HFILE) :
-                         (e->attr & AM_DIR) ? ICON_FOLDER :
-                         guessicon(e->fname);
+      render_icon(2, (i+1)*16, browser_entry_icon(e));
 
-      render_icon(2, (i+1)*16, iconidx);
+      // Keep rows overlapping the cover pane clear of it.
+      unsigned rowy = (1 + i) * 16;
+      unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
 
       if (!(e->attr & AM_DIR)) {
         human_size(szstr, sizeof(szstr), e->filesize);
-        draw_rightj_text(szstr, frame, SCREEN_WIDTH - 2, (1 + i) * 16);
+        draw_rightj_text(szstr, frame, rmax - 2, rowy);
       }
 
       // Animate the row entries if they are too long!
       if (i == smenu.browser.selector - smenu.browser.seloff)
-        draw_text_ovf_rotate(e->fname, frame, 20, (1 + i) * 16,
-                             SCREEN_WIDTH - 26 - font_width(szstr), &smenu.anim_state);
+        draw_text_ovf_rotate(e->fname, frame, 20, rowy,
+                             rmax - 26 - font_width(szstr), &smenu.anim_state);
       else
-        draw_text_ovf(e->fname, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 26 - font_width(szstr));
+        draw_text_ovf(e->fname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, (smenu.browser.selector - smenu.browser.seloff + 1)*16, 63);
+    if (!browser_view) {
+      unsigned selrowy = (smenu.browser.selector - smenu.browser.seloff + 1) * 16;
+      unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+      for (unsigned i = 0; i < hlright; i += 16)
+        render_icon_trans(i, selrowy, 63);
+    }
+  }
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
   }
 
   // Draw path, cut left part if necessary.
@@ -1490,12 +1918,12 @@ static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
     draw_central_text_ovf(romname, frame, SCREEN_WIDTH/2, 52, SCREEN_WIDTH - 20);
 
   npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_GAME], gcode, ver);
-  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 82, SCREEN_WIDTH - 20);
+  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 78, SCREEN_WIDTH - 20);
 
   if (save_type < 0)
-    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   else if (issf)
-    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   else {
     const char *stype[] = {
       msgs[lang_id][MSG_SAVETYPE_NONE],       // SaveTypeNone
@@ -1515,7 +1943,7 @@ static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
     };
 
     npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_SAVE], stype[save_type], ssize[save_type]);
-    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 102, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
   }
 
   draw_box_full(frame, 20, 220, 132, 152, FG_COLOR, HI_COLOR);
@@ -1586,6 +2014,13 @@ void render_gba_load_popup(volatile uint8_t *frame) {
   case GbaLoadPopInfo:
     render_gbarom_info(frame, info->romfn, is_superfw(&info->romh), info->gcode,
                        info->romh.version, p ? p->save_mode : -1);
+    if (info->spatch_found) {
+      char tmp[64];
+      const char *ptn[] = { "", "IPS", "UPS", "BPS" };
+      npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][!info->spatch.valid ? MSG_SPATCH_BAD :
+                   info->spatch_on ? MSG_SPATCH_ON : MSG_SPATCH_OFF], ptn[info->spatch.type]);
+      draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 114, SCREEN_WIDTH - 20);
+    }
     draw_central_text(msgs[lang_id][MSG_LOAD_GBA], frame, 120, 134);
     break;
   case GbaLoadPopLoadS:
@@ -1614,6 +2049,71 @@ void render_gba_load_popup(volatile uint8_t *frame) {
   }
 }
 
+// Case-insensitive (ASCII) substring match of the upper case query.
+static bool name_matches(const char *name, const char *q) {
+  for (; *name; name++) {
+    unsigned i = 0;
+    while (q[i]) {
+      char c = name[i];
+      if (c >= 'a' && c <= 'z')
+        c -= 'a' - 'A';
+      if (c != q[i])
+        break;
+      i++;
+    }
+    if (!q[i])
+      return true;
+  }
+  return false;
+}
+
+// Finds the next match starting at "from" in direction "dir" (wraps around).
+static int search_next(int from, int dir) {
+  const int cnt = smenu.browser.dispentries;
+  for (int i = 0; i < cnt; i++) {
+    int n = (from + dir * i + cnt * 2) % cnt;
+    if (name_matches(sdr_state->fileorder[n]->fname, spop.p.search.q))
+      return n;
+  }
+  return -1;
+}
+
+static void search_update(void) {
+  spop.p.search.count = 0;
+  spop.p.search.match = -1;
+  if (!spop.p.search.q[0])
+    return;
+  for (int i = 0; i < smenu.browser.dispentries; i++)
+    if (name_matches(sdr_state->fileorder[i]->fname, spop.p.search.q))
+      spop.p.search.count++;
+  spop.p.search.match = search_next(0, 1);
+}
+
+void render_search(volatile uint8_t *frame) {
+  char tmp[64];
+  draw_box_outline(frame, 2, 240-2, 18, 158, FG_COLOR);
+  npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_SEARCH_Q], spop.p.search.q);
+  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 22, SCREEN_WIDTH - 20);
+
+  const char *mt = msgs[lang_id][MSG_SEARCH_NONE];
+  if (spop.p.search.match >= 0)
+    mt = sdr_state->fileorder[spop.p.search.match]->fname;
+  if (spop.p.search.count > 1) {
+    npf_snprintf(tmp, sizeof(tmp), "(%d)", spop.p.search.count);
+    draw_rightj_text(tmp, frame, SCREEN_WIDTH - 8, 40);
+    draw_text_ovf(mt, frame, 8, 40, SCREEN_WIDTH - 20 - font_width(tmp));
+  } else
+    draw_central_text_ovf(mt, frame, SCREEN_WIDTH/2, 40, SCREEN_WIDTH - 16);
+
+  for (unsigned i = 0; i < SEARCH_KEYS; i++) {
+    unsigned x = 10 + (i % SEARCH_COLS) * 22, y = 60 + (i / SEARCH_COLS) * 19;
+    char k[2] = { search_keys[i], 0 };
+    draw_button_box(frame, x, x + 22, y, y + 19, spop.selector == i);
+    draw_central_text(k, frame, x + 11, y + 1);
+  }
+  draw_central_text_ovf(msgs[lang_id][MSG_SEARCH_HELP], frame, SCREEN_WIDTH/2, 138, SCREEN_WIDTH - 16);
+}
+
 void render_filemgr(volatile uint8_t *frame) {
   // Draw the file name and the options available
   draw_box_outline(frame, 2, 240-2, 18, 158, FG_COLOR);
@@ -1627,14 +2127,21 @@ void render_filemgr(volatile uint8_t *frame) {
   else
     draw_central_text_ovf(bn, frame, SCREEN_WIDTH/2, 32, SCREEN_WIDTH - 20);
 
+  const unsigned bsp = 24;    // Button spacing
   for (unsigned i = 0; i < FiMgrCNT; i++)
-    draw_button_box(frame, 20, 220, 60 + i*30, 80 + i*30, i == spop.selector);
+    draw_button_box(frame, 20, 220, 60 + i*bsp, 80 + i*bsp, i == spop.selector);
 
-  draw_central_text(msgs[lang_id][MSG_FMGR_DEL], frame, 120, 62 + 30*FiMgrDelete);
-  draw_central_text(msgs[lang_id][(e->attr & AM_HID) ? MSG_FMGR_UNHIDE : MSG_FMGR_HIDE], frame, 120, 62 + 30*FiMgrHide);
+  char fpath[MAX_FN_LEN];
+  strcpy(fpath, smenu.browser.cpath);
+  strcat(fpath, e->fname);
+  bool isfav = find_favorite(fpath, FLAG_RECENT_SD) >= 0;
+
+  draw_central_text(msgs[lang_id][MSG_FMGR_DEL], frame, 120, 62 + bsp*FiMgrDelete);
+  draw_central_text(msgs[lang_id][(e->attr & AM_HID) ? MSG_FMGR_UNHIDE : MSG_FMGR_HIDE], frame, 120, 62 + bsp*FiMgrHide);
+  draw_central_text(msgs[lang_id][isfav ? MSG_FMGR_FAVDEL : MSG_FMGR_FAVADD], frame, 120, 62 + bsp*FiMgrFavorite);
 
   #ifdef SUPPORT_NORGAMES
-  draw_central_text(msgs[lang_id][MSG_NOR_WRITE], frame, 120, 62 + 30*FiMgrWriteNOR);
+  draw_central_text(msgs[lang_id][MSG_NOR_WRITE], frame, 120, 62 + bsp*FiMgrWriteNOR);
   #endif
 }
 
@@ -1772,6 +2279,19 @@ void render_settings(volatile uint8_t *frame) {
     npf_snprintf(tmp, sizeof(tmp), "< %s >", hotkey_list[hotkey_combo].cname);
     draw_text_ovf(msgs[lang_id][MSG_SETT_HOTK], frame, 8, offy + rowh*optcnt, 224);
     draw_central_text(tmp, frame, colx, offy + rowh*optcnt++);
+  }
+
+  if (optnum++ >= baseopt && optcnt < maxrows) {
+    npf_snprintf(tmp, sizeof(tmp), "< %s >", hotkey_list[sleep_combo].cname);
+    draw_text_ovf(msgs[lang_id][MSG_SETT_SLEEPK], frame, 8, offy + rowh*optcnt, 224);
+    draw_central_text(tmp, frame, colx, offy + rowh*optcnt++);
+  }
+
+  if (optnum++ >= baseopt && optcnt < maxrows) {
+    if (autosleep_opt)
+      npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_AUTOSL_MIN], autosleep_mins[autosleep_opt]);
+    draw_text_ovf(msgs[lang_id][MSG_SETT_AUTOSL], frame, 8, offy + rowh*optcnt, 224);
+    draw_central_text(autosleep_opt ? tmp : msgs[lang_id][MSG_AUTOSL_NEVER], frame, colx, offy + rowh*optcnt++);
   }
 
   if (optnum++ >= baseopt && optcnt < maxrows) {
@@ -1913,6 +2433,8 @@ void render_settings(volatile uint8_t *frame) {
                         smenu.set.selector == SettSaveBkp  ? MSG_BACKUP_I :
                         smenu.set.selector == SettFastSD   ? MSG_FASTSD_I :
                         smenu.set.selector == SettFastEWRAM? MSG_FASTEW_I :
+                        smenu.set.selector == SettSleepKeys? MSG_SLEEPK_I :
+                        smenu.set.selector == SettAutoSleep? MSG_AUTOSL_I :
                         smenu.set.selector == DefsPatchEng ? MSG_PATCH_TYPE_I0 + patcher_default :
                         smenu.set.selector == DefsLoadPol  ? MSG_DEF_LOADP_I0 + (autoload_default ^ 1) :
                         smenu.set.selector == DefsSavePol  ? MSG_DEF_SAVEP_I0 + (autosave_default ^ 1) :
@@ -1931,31 +2453,41 @@ void render_settings(volatile uint8_t *frame) {
 
 void render_ui_settings(volatile uint8_t *frame) {
   const unsigned colx = 170;
+  const unsigned rowh = 16;
+  const unsigned y0 = 19;
   char tmpbuf[64];
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %u >", menu_theme + 1U);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, 22, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, y0, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_LANG_NAME]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 22 + 20, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 20 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, y0 + rowh*1, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*1 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 22 + 40, 224);
-  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + 40 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, y0 + rowh*2, 224);
+  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, y0 + rowh*2 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_UIS_SPD0 + anim_speed]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 22 + 60, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 60 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, y0 + rowh*3, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*3 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + 80, 224);
-  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + 80 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, y0 + rowh*4, 224);
+  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, y0 + rowh*4 );
+
+  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_COVER_SZ1 + MIN(cover_size, 3) - 1]);
+  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, y0 + rowh*5, 224);
+  draw_central_text(cover_size ? tmpbuf : msgs[lang_id][MSG_KNOB_DISABLED], frame, colx, y0 + rowh*5 );
+
+  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][browser_view ? MSG_VIEW_CAROUSEL : MSG_VIEW_LIST]);
+  draw_text_ovf(msgs[lang_id][MSG_UIS_VIEW], frame, 8, y0 + rowh*6, 224);
+  draw_central_text(tmpbuf, frame, colx, y0 + rowh*6 );
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, 22 + smenu.uiset.selector * 20, 63);
+      render_icon_trans(i, y0 + smenu.uiset.selector * rowh, 63);
 
-  draw_button_box(frame, 20, 220, 132, 152, smenu.uiset.selector == UiSetSave);
-  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 134);
+  draw_button_box(frame, 20, 220, 136, 156, smenu.uiset.selector == UiSetSave);
+  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 138);
 }
 
 void render_info(volatile uint8_t *frame) {
@@ -1969,10 +2501,11 @@ void render_info(volatile uint8_t *frame) {
 
   switch (smenu.info.selector) {
   case 0:
-    draw_central_text("by davidgf", frame, 120, 70);
+    draw_central_text("by davidgf", frame, 120, 68);
+    draw_central_text("custom version by fefsouza10", frame, 120, 85);
     npf_snprintf(tmp, sizeof(tmp), "Version %lu.%lu (%08lx)", vmaj, vmin, gitver);
-    draw_central_text(tmp, frame, 120, 95);
-    draw_central_text(FW_FLAVOUR " variant", frame, 120, 114);
+    draw_central_text(tmp, frame, 120, 104);
+    draw_central_text(FW_FLAVOUR " variant", frame, 120, 120);
     break;
   case 1:
     draw_central_text("Flash info", frame, 120, 70);
@@ -2051,6 +2584,7 @@ static const struct {
   { render_sav_menu_popup, 1 },
   { render_fw_flash_popup, 1 },
   { render_filemgr,        1 },
+  { render_search,         1 },
   #ifdef SUPPORT_NORGAMES
   { render_gba_norwrite,   GbaNorWrCNT },
   { render_gba_norload,    GbaNorLoadCNT },
@@ -2067,12 +2601,15 @@ void menu_render(unsigned fcnt) {
   dma_memset16(&frame[0], dup8(FG_COLOR), SCREEN_WIDTH*16/2);
 
   // Render icon bar
-  int mintab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
-  for (unsigned i = mintab; i < MENUTAB_MAX; i++)
+  for (unsigned i = 0, x = 0; i < MENUTAB_MAX; i++) {
+    if (!tab_visible(i))
+      continue;
     if (i == smenu.menu_tab)
-      render_icon((i - mintab)*16, 0, i + ICON_RECENT);
+      render_icon(x, 0, i + ICON_RECENT);
     else
-      render_icon_trans((i - mintab)*16, 0, i + ICON_RECENT);
+      render_icon_trans(x, 0, i + ICON_RECENT);
+    x += 16;
+  }
 
   // Render the main area
   dma_memset16(&frame[16*SCREEN_WIDTH], dup8(BG_COLOR), SCREEN_WIDTH*(SCREEN_HEIGHT-16) / 2);
@@ -2088,6 +2625,7 @@ void menu_render(unsigned fcnt) {
     } else {
       static const t_mrender_fn renderfns[] = {
         render_recent,
+        render_favorites,
         render_browser,
         #ifdef SUPPORT_NORGAMES
         render_flashbrowser,
@@ -2115,11 +2653,8 @@ void menu_render(unsigned fcnt) {
 }
 
 void menu_flip() {
-  for (unsigned i = 0; i < objnum; i++) {
-    MEM_OAM[i*4+0] = fobjs[i].y | 0x2000;  // Use 256 entries palette
-    MEM_OAM[i*4+1] = fobjs[i].x | 0x4000;  // Size 16x16
-    MEM_OAM[i*4+2] = fobjs[i].tn + 512;    // OBJ numbers start at 512 for Mode 4
-  }
+  if (objnum)
+    dma_memcpy16(&MEM_OAM[0], fobjs, objnum * 4);
   dma_memset16(&MEM_OAM[objnum*4], 0, 256 - objnum*2);  // Clear unused objects
   REG_DISPCNT = (REG_DISPCNT & ~0x10) | (framen << 4);
   framen ^= 1;
@@ -2137,16 +2672,20 @@ void menu_init(int sram_testres) {
 
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
+  coverart_init(sdr_state->covercache, cover_size);
 
   reload_theme(menu_theme);
 
-  smenu.menu_tab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
+  smenu.menu_tab = tab_visible(MENUTAB_RECENT) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
 
   // Load icons into VRAM
   dma_memcpy16(MEM_VRAM_OBJS, icons_img, sizeof(icons_img) / 2);
   dma_memcpy16(&MEM_PALETTE[256], icons_pal, sizeof(icons_pal) / 2);
   // Generate some icons (selector)
   dma_memset16(&MEM_VRAM_OBJS[63 * 256], dup8(SEL_COLOR), 256 / 2);
+  // Color cube for the carousel thumbnails.
+  coverart_obj_palette();
+  carousel_reset();
 
   // Further setup initial video regs. BG2 is setup in the bootloader already!
   REG_WININ  = 0x0004;     // Only BG2 is enabled in Win0
@@ -2270,6 +2809,17 @@ static void keypress_popup_loadgba(unsigned newkeys) {
 
   // Limit selector to its max value
   spop.selector %= maxsel;
+
+  // SELECT toggles the IPS/UPS/BPS patch.
+  if ((newkeys & KEY_BUTTSEL) && spop.submenu == GbaLoadPopInfo &&
+      spop.p.load.i.spatch_found && spop.p.load.i.spatch.valid) {
+    spop.p.load.i.spatch_on = !spop.p.load.i.spatch_on;
+    // A bigger ROM might not leave space for DirSav anymore.
+    if (!dirsav_avail_sdram(&spop.p.load.i) && spop.p.load.i.use_dsaving) {
+      spop.p.load.i.use_dsaving = false;
+      spop.p.load.l.sram_save_type = autosave_default ? SaveReboot : SaveDisable;
+    }
+  }
 
   if (newkeys & KEY_BUTTLEFT) {
     if (spop.submenu == GbaLoadPopLoadS) {
@@ -2445,10 +2995,11 @@ static void keypress_popup_loadgba(unsigned newkeys) {
         spop.p.load.i.ingame_menu_enabled,
         spop.p.load.i.rtc_patch_enabled ? &rtci : NULL,
         spop.p.load.l.use_cheats ? spop.p.load.l.cheats_size : 0,
+        spop.p.load.i.spatch_on ? &spop.p.load.i.spatch : NULL,
         loadrom_progress);
       if (err) {
         // Show any errors that might have happened!
-        spop.alert_msg = msgs[lang_id][MSG_ERR_READ];
+        spop.alert_msg = msgs[lang_id][err == ERR_LOAD_PATCH ? MSG_ERR_PATCH : MSG_ERR_READ];
         // TODO: We cannot (in many cases) continue since we trash the SDRAM!
       }
     }
@@ -2739,6 +3290,47 @@ static void keypress_popup_norload(unsigned newkeys) {
 }
 #endif
 
+static void keypress_popup_search(unsigned newkeys) {
+  int sel = spop.selector;
+  if (newkeys & KEY_BUTTLEFT)
+    sel = (sel % SEARCH_COLS) ? sel - 1 : sel + SEARCH_COLS - 1;
+  if (newkeys & KEY_BUTTRIGHT)
+    sel = (sel % SEARCH_COLS == SEARCH_COLS - 1) ? sel - SEARCH_COLS + 1 : sel + 1;
+  if (newkeys & KEY_BUTTUP)
+    sel = (sel + SEARCH_KEYS - SEARCH_COLS) % SEARCH_KEYS;
+  if (newkeys & KEY_BUTTDOWN)
+    sel = (sel + SEARCH_COLS) % SEARCH_KEYS;
+  spop.selector = sel;
+
+  char *q = spop.p.search.q;
+  unsigned ql = strlen(q);
+  if (newkeys & KEY_BUTTA) {
+    char k = search_keys[sel];
+    if (k == '<') {
+      if (ql)
+        q[ql - 1] = 0;
+    }
+    else if (ql < SEARCH_MAXLEN) {
+      q[ql] = (k == '_') ? ' ' : k;
+      q[ql + 1] = 0;
+    }
+    search_update();
+  }
+  // L/R move between matches, Start jumps to the current one.
+  if (spop.p.search.match >= 0) {
+    if (newkeys & KEY_BUTTL)
+      spop.p.search.match = search_next(spop.p.search.match - 1, -1);
+    if (newkeys & KEY_BUTTR)
+      spop.p.search.match = search_next(spop.p.search.match + 1, 1);
+    if (newkeys & KEY_BUTTSTA) {
+      int m = spop.p.search.match;
+      smenu.browser.selector = m;
+      smenu.browser.seloff = MAX(0, MIN(m, smenu.browser.dispentries - BROWSER_ROWS));
+      spop.pop_num = POPUP_NONE;
+    }
+  }
+}
+
 static void keypress_popup_filemgr(unsigned newkeys) {
   if (newkeys & KEY_BUTTUP)
     spop.selector = MAX(0, spop.selector - 1);
@@ -2786,6 +3378,18 @@ static void keypress_popup_filemgr(unsigned newkeys) {
       spop.pop_num = POPUP_NONE;
       break;
 
+    case FiMgrFavorite:
+      if (e->isdir)
+        spop.alert_msg = msgs[lang_id][MSG_ERR_GENERIC];
+      else {
+        char tmpfn[MAX_FN_LEN];
+        strcpy(tmpfn, smenu.browser.cpath);
+        strcat(tmpfn, e->fname);
+        toggle_favorite(tmpfn, FLAG_RECENT_SD);
+      }
+      spop.pop_num = POPUP_NONE;
+      break;
+
     #ifdef SUPPORT_NORGAMES
     case FiMgrWriteNOR:
       if (e->filesize > MAX_GBA_ROM_SIZE)
@@ -2818,22 +3422,22 @@ static void keypress_popup_filemgr(unsigned newkeys) {
   }
 }
 
-static void keypress_menu_recent(unsigned newkeys) {
-  if (smenu.recent.maxentries) {
+static void keypress_rlist(unsigned newkeys, t_rentry *ents, t_rlist *st, bool isfav) {
+  if (st->maxentries) {
     if (newkeys & KEY_BUTTUP)
-      smenu.recent.selector = MAX(0, smenu.recent.selector - 1);
+      st->selector = MAX(0, st->selector - 1);
     else if (newkeys & KEY_BUTTDOWN)
-      smenu.recent.selector = MIN(smenu.recent.maxentries - 1, smenu.recent.selector + 1);
+      st->selector = MIN(st->maxentries - 1, st->selector + 1);
     if (newkeys & KEY_BUTTLEFT) {
-      smenu.recent.selector = MAX(0, smenu.recent.selector - RECENT_ROWS);
-      smenu.recent.seloff   = MAX(0, smenu.recent.seloff - RECENT_ROWS);
+      st->selector = MAX(0, st->selector - RECENT_ROWS);
+      st->seloff   = MAX(0, st->seloff - RECENT_ROWS);
     }
     else if (newkeys & KEY_BUTTRIGHT) {
-      smenu.recent.selector = MIN(smenu.recent.maxentries - 1, smenu.recent.selector + RECENT_ROWS);
-      smenu.recent.seloff   = MIN(smenu.recent.maxentries - 1, smenu.recent.seloff   + RECENT_ROWS);
+      st->selector = MIN(st->maxentries - 1, st->selector + RECENT_ROWS);
+      st->seloff   = MIN(st->maxentries - 1, st->seloff   + RECENT_ROWS);
     }
     if (newkeys & KEY_BUTTA) {
-      t_rentry *e = &sdr_state->rentries[smenu.recent.selector];
+      t_rentry *e = &ents[st->selector];
       #ifdef SUPPORT_NORGAMES
       if (e->flags & FLAG_RECENT_NOR) {
         // Try to find the ROM in the current flash metadata.
@@ -2859,28 +3463,98 @@ static void keypress_menu_recent(unsigned newkeys) {
       }
     }
     else if (newkeys & KEY_BUTTSEL) {
+      // Callbacks run later on, they can only use global state.
       void recent_del_cb(bool confirm) {
         if (confirm)
-          delete_recent_flush(smenu.recent.selector);
+          delete_rlist_flush(sdr_state->rentries, &smenu.recent, RECENT_FILEPATH, smenu.recent.selector);
       }
-      spop.qpop.message = msgs[lang_id][MSG_Q4_DELREC];
+      void fav_del_cb(bool confirm) {
+        if (confirm)
+          delete_rlist_flush(sdr_state->favorites, &smenu.favs, FAVORITES_FILEPATH, smenu.favs.selector);
+      }
+      spop.qpop.message = msgs[lang_id][isfav ? MSG_Q6_DELFAV : MSG_Q4_DELREC];
       spop.qpop.default_button = msgs[lang_id][MSG_Q_NO];
       spop.qpop.confirm_button = msgs[lang_id][MSG_Q_YES];
       spop.qpop.option = 0;
-      spop.qpop.callback = recent_del_cb;
+      spop.qpop.callback = isfav ? fav_del_cb : recent_del_cb;
       spop.qpop.clear_popup_ok = false;
+    }
+    else if ((newkeys & KEY_BUTTSTA) && !isfav) {
+      // Start marks/unmarks recent games (SD or NOR) as favorites.
+      const t_rentry *e = &ents[st->selector];
+      toggle_favorite(e->fpath, e->flags);
     }
   }
 
-  if (smenu.recent.selector < smenu.recent.seloff)
-    smenu.recent.seloff = smenu.recent.selector;
-  else if (smenu.recent.selector >= smenu.recent.seloff + RECENT_ROWS)
-    smenu.recent.seloff = smenu.recent.selector - RECENT_ROWS + 1;
+  if (st->selector < st->seloff)
+    st->seloff = st->selector;
+  else if (st->selector >= st->seloff + RECENT_ROWS)
+    st->seloff = st->selector - RECENT_ROWS + 1;
+}
+
+static void keypress_menu_recent(unsigned newkeys) {
+  keypress_rlist(newkeys, sdr_state->rentries, &smenu.recent, false);
+}
+
+static void keypress_menu_favorites(unsigned newkeys) {
+  keypress_rlist(newkeys, sdr_state->favorites, &smenu.favs, true);
+}
+
+// Folds a name's first character for the "jump to next letter" feature.
+static inline unsigned initial_fold(unsigned c) {
+  return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+static unsigned browser_initial(int n) {
+  return initial_fold(sdr_state->fileorder[n]->sortname[0]);
+}
+
+#ifdef SUPPORT_NORGAMES
+static unsigned norgame_initial(int n) {
+  const t_flash_game_entry *e = &sdr_state->nordata.games[n];
+  return initial_fold((uint8_t)e->game_name[e->bnoffset]);
+}
+#endif
+
+// Returns the first entry of the letter group after the current one, wrapping
+// around to the top of the list at the end.
+static int next_initial(int cur, int cnt, unsigned (*initial)(int)) {
+  unsigned c = initial(cur);
+  for (int i = cur + 1; i < cnt; i++)
+    if (initial(i) != c)
+      return i;
+  return 0;
+}
+
+// Returns the first entry of the letter group before the current one, wrapping
+// around to the last group at the top of the list.
+static int prev_initial(int cur, int cnt, unsigned (*initial)(int)) {
+  // Find the start of the current group, then step into the previous one.
+  while (cur > 0 && initial(cur - 1) == initial(cur))
+    cur--;
+  int p = cur > 0 ? cur - 1 : cnt - 1;
+  while (p > 0 && initial(p - 1) == initial(p))
+    p--;
+  return p;
+}
+
+// Handles R+Down / R+Up (jump to the next / previous initial letter). Returns
+// true if the keys were consumed.
+static bool letter_jump(unsigned newkeys, int *selector, int cnt, unsigned (*initial)(int)) {
+  if (!(modifier_keys() & KEY_BUTTR) || !(newkeys & (KEY_BUTTUP | KEY_BUTTDOWN)))
+    return false;
+  if (newkeys & KEY_BUTTDOWN)
+    *selector = next_initial(*selector, cnt, initial);
+  else
+    *selector = prev_initial(*selector, cnt, initial);
+  return true;
 }
 
 static void keypress_menu_browse(unsigned newkeys) {
   if (smenu.browser.dispentries) {
-    // Move menu up and down
+    // Move menu up and down (R+Up/Down jumps between initial letters)
+    if (letter_jump(newkeys, &smenu.browser.selector, smenu.browser.dispentries, browser_initial))
+      newkeys &= ~(KEY_BUTTUP | KEY_BUTTDOWN);
     if (newkeys & KEY_BUTTUP)
       smenu.browser.selector = MAX(0, smenu.browser.selector - 1);
     if (newkeys & KEY_BUTTDOWN)
@@ -2892,6 +3566,22 @@ static void keypress_menu_browse(unsigned newkeys) {
     if (newkeys & KEY_BUTTRIGHT) {
       smenu.browser.selector = MIN(smenu.browser.dispentries - 1, smenu.browser.selector + BROWSER_ROWS);
       smenu.browser.seloff   = MIN(smenu.browser.dispentries - 1, smenu.browser.seloff   + BROWSER_ROWS);
+    }
+    if ((newkeys & KEY_BUTTSTA) && (modifier_keys() & KEY_BUTTR)) {
+      // R+Start opens the file search (keeps the last query).
+      spop.pop_num = POPUP_SEARCH;
+      spop.anim = 0;
+      search_update();
+    }
+    else if (newkeys & KEY_BUTTSTA) {
+      // Start marks/unmarks the selected file as a favorite.
+      t_centry *e = sdr_state->fileorder[smenu.browser.selector];
+      if (!e->isdir) {
+        char path[MAX_FN_LEN];
+        strcpy(path, smenu.browser.cpath);
+        strcat(path, e->fname);
+        toggle_favorite(path, FLAG_RECENT_SD);
+      }
     }
     // Move into a new dir and/or open a file
     if (newkeys & KEY_BUTTA) {
@@ -2940,6 +3630,8 @@ static void keypress_menu_browse(unsigned newkeys) {
 #ifdef SUPPORT_NORGAMES
 static void keypress_menu_norbrowse(unsigned newkeys) {
   if (smenu.fbrowser.maxentries) {
+    if (letter_jump(newkeys, &smenu.fbrowser.selector, smenu.fbrowser.maxentries, norgame_initial))
+      newkeys &= ~(KEY_BUTTUP | KEY_BUTTDOWN);
     if (newkeys & KEY_BUTTUP)
       smenu.fbrowser.selector = MAX(0, smenu.fbrowser.selector - 1);
     if (newkeys & KEY_BUTTDOWN)
@@ -2952,6 +3644,8 @@ static void keypress_menu_norbrowse(unsigned newkeys) {
       smenu.fbrowser.selector = MIN(smenu.fbrowser.maxentries - 1, smenu.fbrowser.selector + NORGAMES_ROWS);
       smenu.fbrowser.seloff   = MIN(smenu.fbrowser.maxentries - 1, smenu.fbrowser.seloff   + NORGAMES_ROWS);
     }
+    if (newkeys & KEY_BUTTSTA)   // Start marks/unmarks the game as a favorite.
+      toggle_favorite(sdr_state->nordata.games[smenu.fbrowser.selector].game_name, FLAG_RECENT_NOR);
 
     if (newkeys & KEY_BUTTA)
       browser_open_nor(&sdr_state->nordata.games[smenu.fbrowser.selector]);
@@ -2996,6 +3690,10 @@ static void keypress_menu_settings(unsigned newkeys) {
   if (newkeys & KEY_BUTTLEFT) {
     if (smenu.set.selector == SettHotkey)
       hotkey_combo = (hotkey_combo + hotkey_listcnt - 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettSleepKeys)
+      sleep_combo = (sleep_combo + hotkey_listcnt - 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettAutoSleep)
+      autosleep_opt = autosleep_opt ? autosleep_opt - 1 : 0;
     else if (smenu.set.selector == SettSaveLoc)
       save_path_default = (save_path_default + SaveDirCNT - 1) % SaveDirCNT;
     #ifdef SUPPORT_NORGAMES
@@ -3014,6 +3712,10 @@ static void keypress_menu_settings(unsigned newkeys) {
   if (newkeys & KEY_BUTTRIGHT) {
     if (smenu.set.selector == SettHotkey)
       hotkey_combo = (hotkey_combo + 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettSleepKeys)
+      sleep_combo = (sleep_combo + 1) % hotkey_listcnt;
+    else if (smenu.set.selector == SettAutoSleep)
+      autosleep_opt = MIN(AUTOSLEEP_CNT - 1, autosleep_opt + 1);
     else if (smenu.set.selector == SettSaveLoc)
       save_path_default = (save_path_default + 1) % SaveDirCNT;
     #ifdef SUPPORT_NORGAMES
@@ -3071,6 +3773,7 @@ static void keypress_menu_settings(unsigned newkeys) {
 }
 
 static void keypress_menu_uisettings(unsigned newkeys) {
+  const uint8_t prev_cover_size = cover_size;
   if (newkeys & KEY_BUTTUP)
     smenu.uiset.selector = MAX(0, smenu.uiset.selector - 1);
   if (newkeys & KEY_BUTTDOWN)
@@ -3082,8 +3785,12 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       anim_speed = anim_speed ? anim_speed - 1 : 0;
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + COVER_SIZE_CNT - 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view = !browser_view;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + LANG_COUNT - 1) % LANG_COUNT;
   }
@@ -3094,8 +3801,12 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       anim_speed = MIN(animspd_cnt - 1, anim_speed + 1);
     else if (smenu.uiset.selector == UiSetHid)
       hide_hidden ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      cover_size = (MIN(cover_size, COVER_SIZE_CNT - 1) + 1) % COVER_SIZE_CNT;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view = !browser_view;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + 1) % LANG_COUNT;
   }
@@ -3106,6 +3817,12 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       spop.alert_msg = msgs[lang_id][MSG_OK_SETSAVE];
     else
       spop.alert_msg = msgs[lang_id][MSG_ERR_SETSAVE];
+  }
+
+  // The cover cache holds images at the current size, rebuild it on changes.
+  if (cover_size != prev_cover_size && cover_size) {
+    coverart_init(sdr_state->covercache, cover_size);
+    carousel_reset();
   }
 
   reload_theme(menu_theme);
@@ -3260,6 +3977,7 @@ void menu_keypress(unsigned newkeys) {
         keypress_popup_savefile,
         keypress_popup_flash,
         keypress_popup_filemgr,
+        keypress_popup_search,
         #ifdef SUPPORT_NORGAMES
         keypress_popup_norwrite,
         keypress_popup_norload,
@@ -3269,17 +3987,20 @@ void menu_keypress(unsigned newkeys) {
     }
   } else {
     // Menu change via trigger buttons
-    int mintab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
     if (newkeys & KEY_BUTTL)
-      smenu.menu_tab = MAX((int)smenu.menu_tab - 1, mintab);
+      smenu.menu_tab = tab_step(smenu.menu_tab, -1);
     else if (newkeys & KEY_BUTTR)
-      smenu.menu_tab = MIN(smenu.menu_tab + 1, MENUTAB_MAX - 1);
+      smenu.menu_tab = tab_step(smenu.menu_tab, 1);
+
+    if (carousel_active())
+      newkeys = carousel_keys(newkeys);
 
     if (newkeys & (KEY_BUTTL | KEY_BUTTR | KEY_BUTTUP | KEY_BUTTDOWN))
       smenu.anim_state = 0;
 
     const t_mkeyupd_fn keyfns[] = {
       keypress_menu_recent,
+      keypress_menu_favorites,
       keypress_menu_browse,
       #ifdef SUPPORT_NORGAMES
       keypress_menu_norbrowse,
@@ -3297,21 +4018,30 @@ void menu_keypress(unsigned newkeys) {
 const uint16_t keyrep = 0x0F3;
 static uint32_t keyreptmr[10] = {0};
 static uint8_t  keyrepcnt[10] = {0};
-static uint32_t prev_keys = 0;
+static uint32_t lr_held = 0;     // L/R pressed since they were last released
+static bool lr_combo = false;    // Another key was pressed while L/R were held
 
 // Handle button input. Supports key re-press whenever a button is held for a while.
 // This key repeat pattern can be tuned for speed and what not.
 uint16_t get_keypress() {
+  extern volatile uint8_t key_presses[10];
   uint32_t ckeys = curr_pressed_keys();
   uint32_t mkeys = 0;
   for (unsigned i = 0; i < 10; i++) {
-    if (ckeys & (1 << i)) {
-      if (!(prev_keys & (1 << i))) {
-        keyreptmr[i] = systime() + KEY_REPEAT_INITIAL;
-        mkeys |= (1 << i);
-        keyrepcnt[i] = 0;
-      }
-      else if (((1 << i) & keyrep) && systime() > keyreptmr[i]) {
+    // New presses are counted by the V-blank IRQ and reported one per call.
+    if (key_presses[i]) {
+      REG_IME = 0;
+      key_presses[i]--;
+      REG_IME = 1;
+      keyreptmr[i] = systime() + KEY_REPEAT_INITIAL;
+      mkeys |= (1 << i);
+      keyrepcnt[i] = 0;
+    }
+    else if (ckeys & (1 << i)) {
+      // Only keys whose press was already counted repeat. A key pressed after
+      // the last V-blank is reported by the IRQ counter next frame: repeating
+      // it here as well reported that single press twice.
+      if (((1 << i) & keyrep) && keyreptmr[i] && systime() > keyreptmr[i]) {
         if (keyrepcnt[i] > KEY_REPEAT_CNT1)
           keyreptmr[i] = systime() + KEY_REPEAT_FAST;
         else {
@@ -3325,7 +4055,25 @@ uint16_t get_keypress() {
       keyreptmr[i] = 0;
   }
 
-  prev_keys = ckeys;
+  // L/R are reported on release, and only if no other key was pressed while
+  // they were held, so they also work as modifiers (ie. R+Up/Down).
+  const uint32_t lrmask = KEY_BUTTL | KEY_BUTTR;
+  if ((ckeys | mkeys) & lrmask) {
+    lr_held |= (ckeys | mkeys) & lrmask;
+    if (mkeys & ~lrmask)
+      lr_combo = true;
+  }
+  mkeys &= ~lrmask;
+  // L/R held at any point since the last call (a quick R+Start tap can be
+  // fully released by the time it is processed).
+  lr_mods = lr_held | (ckeys & lrmask);
+  if (!(ckeys & lrmask) && lr_held) {
+    if (!lr_combo)
+      mkeys |= lr_held;
+    lr_held = 0;
+    lr_combo = false;
+  }
+
   return mkeys;
 }
 

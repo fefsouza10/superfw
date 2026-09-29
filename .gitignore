@@ -7,3 +7,7 @@
 *.gcno
 *.info
 *.i
+__pycache__/
+src/menu_messages.h
+src/messages_data.h
+gbvplayer.gba.bin

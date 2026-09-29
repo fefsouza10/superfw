@@ -240,6 +240,7 @@ typedef void (*progress_fn)(unsigned done, unsigned total);
 typedef bool (*progress_abort_fn)(unsigned done, unsigned total);
 
 struct struct_t_patch;
+struct struct_t_softpatch;
 
 #define ERR_SAVE_BADARG         0x1
 #define ERR_SAVE_BADSAVE        0x2
@@ -252,6 +253,7 @@ struct struct_t_patch;
 #define ERR_NO_PAYLOAD_SPACE    0x3
 #define ERR_LOAD_NOEMU          0x4
 #define ERR_FLASH_OP            0x5
+#define ERR_LOAD_PATCH          0x6
 
 // Prepares the save game files, readin and writing files in some cases.
 unsigned prepare_savegame(t_sram_load_policy loadp, t_sram_save_policy savep, EnumSavetype stype, t_dirsave_info *dsinfo, const char *savefn);
@@ -263,7 +265,8 @@ unsigned preload_gba_rom(const char *fn, uint32_t fs, t_rom_header *romh);
 unsigned load_gba_rom(const char *fn, uint32_t fs, const char *savefn,
                       const struct struct_t_patch *ptch,
                       const t_dirsave_info *dsinfo, bool ingame_menu,
-                      const t_rtc_info *rtcinfo, unsigned cheats, progress_fn progress);
+                      const t_rtc_info *rtcinfo, unsigned cheats,
+                      const struct struct_t_softpatch *spatch, progress_fn progress);
 // Launch from NOR
 unsigned  flash_gba_nor(const char *fn, uint32_t fs, const t_rom_header *rom_header,
                         const struct struct_t_patch *ptch, bool dirsaving, bool ingame_menu, bool rtc_patches,

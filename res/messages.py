@@ -35,6 +35,7 @@ en_strings = [
   "MSG_Q2_SRAMTST":  "After running this test, you must shutdown your GBA for aprox. 2 minutes. Continue?",
   "MSG_Q3_LOADPDB":  "Do you want to load and replace your patch database?",
   "MSG_Q4_DELREC":   "Delete recently played game? (Does not delete the ROM!)",
+  "MSG_Q6_DELFAV":   "Remove game from favorites? (Does not delete the ROM!)",
 
   "MSG_PATCHGEN_OK": "Patch generation completed!",        # alertmsg
   "MSG_SRAMTST_RDY": "You might now power off!",           # alertmsg
@@ -56,6 +57,10 @@ en_strings = [
   "MSG_SET_TITL2":   "Default GBA settings",
 
   "MSG_SETT_HOTK":   "Menu Hot-key",
+  "MSG_SETT_SLEEPK": "Wake from sleep",
+  "MSG_SETT_AUTOSL": "Menu auto sleep",
+  "MSG_AUTOSL_NEVER": "< Never >",
+  "MSG_AUTOSL_MIN":  "< %u min >",
   "MSG_SETT_BOOT":   "Game boot",
   "MSG_SETT_SAVET":  "Save path",
   "MSG_SETT_SAVEBK": "Save backup #",
@@ -80,6 +85,13 @@ en_strings = [
   "MSG_UIS_RECNT": "Recent ROMs",
   "MSG_UIS_ANSPD": "Text speed",
   "MSG_UIS_BHID":  "Show hidden files",
+  "MSG_UIS_COVER": "Cover art",
+  "MSG_UIS_VIEW": "Game list view",
+  "MSG_VIEW_LIST": "List",
+  "MSG_VIEW_CAROUSEL": "Carousel",
+  "MSG_COVER_SZ1": "Small",
+  "MSG_COVER_SZ2": "Medium",
+  "MSG_COVER_SZ3": "Large",
   "MSG_UIS_SAVE":  "Save to SD card",
 
   "MSG_UIS_SPD0":  "Very slow",
@@ -115,6 +127,8 @@ en_strings = [
   "MSG_STATE_TYPE_PT": "Savestate files live in %s dir",
   "MSG_BACKUP_I":      "Keep the last N save files",
   "MSG_FASTSD_I":      "Use a fast ROM loading mechanism. Can result in crashes or incorrect reads in some devices",
+  "MSG_SLEEPK_I":      "Buttons that wake the console from sleep (in-game menu and menu auto sleep)",
+  "MSG_AUTOSL_I":      "Turns the screen off and sleeps after this idle time in the menu",
   "MSG_FASTEW_I":      "Overclock EWRAM for some extra performance. Not available on NDS or GBA Micro",
   "MSG_INGAME_I":      "Show menu on combo key press",
   "MSG_PATCHE_I":      "Run PatchEngine to generate patches for this ROM",
@@ -164,6 +178,12 @@ en_strings = [
   "MSG_DEF_RTCVAL":  "RTC time",
   "MSG_DEF_SPEED":   "RTC speed",
   "MSG_LOAD_GBA":    "Load GBA game ROM",
+  "MSG_SEARCH_Q":    "Search: %s_",
+  "MSG_SEARCH_NONE": "No matches",
+  "MSG_SEARCH_HELP": "A: type  L/R: prev/next  START: go",
+  "MSG_SPATCH_ON":   "%s patch: on [SELECT]",
+  "MSG_SPATCH_OFF":  "%s patch: off [SELECT]",
+  "MSG_SPATCH_BAD":  "%s patch does not match ROM",
 
   "MSG_LOADINFO_GAME": "GameID: %s | Version: %d",
   "MSG_LOADINFO_SAVE": "Save type: %s (%s)",
@@ -171,11 +191,15 @@ en_strings = [
 
   "MSG_OK_SETSAVE": "Settings saved!",                   # alertmsg
   "MSG_OK_DELFILE": "File deleted!",                     # alertmsg
+  "MSG_OK_FAVADD": "Added to favorites!",                # alertmsg
+  "MSG_OK_FAVDEL": "Removed from favorites!",            # alertmsg
   "MSG_OK_GENERIC": "Completed successfully!",           # alertmsg
 
   "MSG_FMGR_DEL":    "Delete file/directory",
   "MSG_FMGR_HIDE":   "Hide file/directory",
   "MSG_FMGR_UNHIDE": "Un-Hide file/directory",
+  "MSG_FMGR_FAVADD": "Add to favorites",
+  "MSG_FMGR_FAVDEL": "Remove from favorites",
 
   "MSG_SAVOPT_OPT0": "Write SRAM to sav",
   "MSG_SAVOPT_OPT1": "Load sav to SRAM",
@@ -214,6 +238,7 @@ en_strings = [
   "MSG_ERR_SETSAVE": "Error saving settings!",             # alertmsg
   "MSG_ERR_DELFILE": "Error deleting file!",               # alertmsg
   "MSG_ERR_READ":    "Error: could not load ROM!",         # alertmsg
+  "MSG_ERR_PATCH":   "Error: could not apply patch!",      # alertmsg
   "MSG_ERR_NOEMU":   "Can't find emulator!",               # alertmsg
   "MSG_ERR_TOOBIG":  "The GBA file is too big!",           # alertmsg
   "MSG_ERR_SAVERD":  "Error: can't read save file",        # alertmsg
@@ -259,6 +284,7 @@ en_menu_strings = [
   "IMENU_MAIN3_SSTATE":     "Savestates",
   "IMENU_MAIN4_RTC":        "RTC clock",
   "IMENU_MAIN5_CHEATS":     "Cheats",
+  "IMENU_MAIN6_SLEEP":      "Sleep",
 
   "IMENU_GOBACK":           "Go back",
   "IMENU_UPDAT_RTC":        "Update RTC clock",

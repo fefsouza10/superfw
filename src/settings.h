@@ -60,6 +60,8 @@ extern uint8_t menu_theme;
 extern uint8_t lang_id;
 extern uint8_t recent_menu;
 extern uint8_t hide_hidden;
+extern uint8_t cover_size;
+extern uint8_t browser_view;
 extern uint8_t anim_speed;
 
 // Defaults/Settings
@@ -73,6 +75,10 @@ extern uint8_t save_path_nor_default;
 extern uint8_t state_path_default;
 extern uint8_t backup_sram_default;
 extern uint8_t hotkey_combo;
+extern uint8_t sleep_combo;
+extern uint8_t autosleep_opt;
+#define AUTOSLEEP_CNT 5
+extern const uint8_t autosleep_mins[AUTOSLEEP_CNT];
 extern uint8_t enable_cheats;
 extern uint8_t autoload_default;
 extern uint8_t autosave_default;

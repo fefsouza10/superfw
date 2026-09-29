@@ -56,6 +56,8 @@ typedef struct {
   uint32_t menu_anim_speed;            // Menu animation speed
   uint16_t menu_palette[8];            // Palette colors for the menu
   uint32_t savefile_backups;           // Backup count
+  uint32_t sleep_keys;                 // Sleep mode wake up combo (KEYINPUT mask)
+  char sleep_keys_name[20];            // Wake up combo name
   char savefile_pattern[256];          // File name (without the .sav) pattern
   char statefile_pattern[256];         // File name (without the .X.state) pattern
 } t_igmenu;

@@ -184,6 +184,7 @@ en_strings = [
   "MSG_SPATCH_ON":   "%s patch: on [SELECT]",
   "MSG_SPATCH_OFF":  "%s patch: off [SELECT]",
   "MSG_SPATCH_BAD":  "%s patch does not match ROM",
+  "MSG_PLAYTIME":    "Play time: %s",
 
   "MSG_LOADINFO_GAME": "GameID: %s | Version: %d",
   "MSG_LOADINFO_SAVE": "Save type: %s (%s)",
@@ -285,6 +286,7 @@ en_menu_strings = [
   "IMENU_MAIN4_RTC":        "RTC clock",
   "IMENU_MAIN5_CHEATS":     "Cheats",
   "IMENU_MAIN6_SLEEP":      "Sleep",
+  "IMENU_PLAYTIME":         "%s played",
 
   "IMENU_GOBACK":           "Go back",
   "IMENU_UPDAT_RTC":        "Update RTC clock",

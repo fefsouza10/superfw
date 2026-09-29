@@ -1,63 +1,44 @@
 # Roteiro de testes no GBA SP (SuperChis Prime)
 
-Firmware: `superfw-chis-7d79dde.fw` (branch `claude/project-thread-3djlx9`, commit `7d79dde`).
-Corrige o in-game menu que travava na `3029df1`, traz o vídeo com imagem melhor
-e com som, e o novo modo carrossel das capas. Os itens 1 a 5 da rodada anterior
-passaram e não precisam ser repetidos.
+Rodada da próxima versão: tempo de jogo e conversor de vídeo melhorado.
+Firmware: `superfw-chis-tempo.fw` (branch `claude/project-thread-3djlx9`, o commit
+está no nome do arquivo entregue). Tudo o que foi validado na v0.21-fefsouza10.1
+continua igual e não precisa ser repetido.
 
 ## Antes de começar
 - Faça backup da pasta `/.superfw` e dos seus `.sav` do SD.
-- Rode primeiro como `.gba`, iniciando pela SuperFW instalada, igual aos testes
-  anteriores.
+- Os itens 1 e 2 podem ser testados rodando como `.gba`. O item 3 (NOR) só vale
+  com a firmware gravada, porque o código que conta o tempo nos jogos da NOR fica
+  na flash da firmware.
 - Anote o resultado de cada item: OK, falhou (o que aconteceu) ou não testado.
 
-## 1. In-game menu (era o item 7 que travava)
-1. Abra um jogo pelo SD e aperte a tecla do menu (L+R+Start, ou a que você
-   escolheu): o menu tem que abrir normalmente.
-2. Teste "Voltar ao jogo", um savestate (salvar e carregar) e o "Suspender".
-3. Repita com um jogo da NOR.
-4. Abra um jogo com patch IPS (`demo-ips.gba` do zip de patches) e abra o menu
-   nele também.
+## 1. Tempo de jogo, jogo com save SRAM/EEPROM ou sem save (SD)
+1. Abra um jogo desses (quase todos que não são Pokémon) com o in-game menu
+   ligado e jogue uns 5 minutos.
+2. Abra o in-game menu: ao lado de "Voltar ao jogo" aparece "5m jogados" (mais ou
+   menos). Volte ao jogo.
+3. Salve no jogo normalmente e desligue o console direto, sem abrir o menu.
+4. Ligue de novo e abra a tela de informações do mesmo jogo: tem que mostrar
+   "Tempo de jogo: 5m" (ou o que você jogou).
+5. Carregue o jogo: o save tem que estar lá, igual (o contador usa 4 bytes livres
+   da SRAM e devolve os originais antes de gravar o `.sav`).
+6. Jogue mais um pouco: o total soma com o anterior.
 
-## 2. Suspender com outra combinação (item 7 da rodada anterior)
-1. Configurações gerais → "Acordar com": escolha outra combinação (por exemplo
-   L+R+A) e salve.
-2. Entre num jogo, abra o in-game menu: o item deve mostrar "Suspender (L+R+A)".
-3. Suspenda, espere uns minutos e acorde com a combinação nova. L+R+Select não
-   deve mais acordar.
+## 2. Tempo de jogo, jogo com save Flash (Pokémon)
+1. Jogue uns minutos, abra o in-game menu (confira o tempo) e volte ao jogo.
+2. Desligue o console. Ao ligar, a tela de informações mostra o tempo até a hora
+   em que o menu foi aberto (o tempo depois disso se perde nesses jogos).
+3. Confira que o save do Pokémon continua perfeito.
 
-## 3. Suspensão automática no menu (item 8)
-1. Configurações gerais → "Suspender no menu": 2 min. Salve.
-2. Deixe o GBA parado no navegador: depois de 2 minutos a tela apaga.
-3. Acorde com a combinação escolhida: o menu volta como estava, sem ter recebido
-   os botões da combinação (não troca de aba, não abre nada).
-4. Com "Nunca", a tela não deve apagar.
+## 3. Tempo de jogo na NOR (só com a firmware gravada)
+1. Grave a firmware (`.fw`) e abra um jogo da NOR com o in-game menu.
+2. Repita o item 1 (ou 2, se for Pokémon) com ele.
+3. Se o jogo tiver mais de 28 MB e foi gravado na NOR com uma versão antiga, grave
+   de novo antes.
 
-## 4. Tecla do in-game menu e bateria (item 9)
-1. Troque a "Tecla do menu" para outra combinação, salve e reinicie o GBA. A
-   escolha continua (antes voltava para L+R+Start), e o menu abre com ela no jogo.
-2. Se puder comparar, anote quanto a pilha dura parada no menu.
-
-## 5. Vídeo (zip `conversor-video-superfw.zip`)
-1. Copie `exemplo-desenho.gbv` para o SD e abra: agora tem som e a imagem é bem
-   mais nítida que antes.
-2. Converta de novo o episódio que você testou (os `.gbv` antigos ainda tocam,
-   mas com a qualidade antiga): `python3 gbvconv.py episodio.mkv`. A conversão
-   agora leva mais ou menos o tempo do vídeo (uns 20 min para 20 min). Anote o
-   tempo.
-3. Confira som e imagem sincronizados do começo ao fim, sem travadas, inclusive
-   depois de avançar/voltar com ←/→ e L/R.
-4. Diga como ficou a qualidade e em que tipo de cena ainda fica ruim.
-
-## 6. Carrossel de capas (novo)
-1. Aba UI → "Exibição": ←/→ troca para "Carrossel". Salve.
-2. Na aba do SD, numa pasta de jogos: a capa do jogo selecionado fica no meio, o
-   anterior e o seguinte aparecem pequenos nas laterais, e o nome e o tamanho
-   embaixo.
-3. ←/→ vão para o jogo anterior/seguinte; ↑/↓ pulam uma página; R+↑/↓ pulam de
-   letra; A abre; Start marca favorito; B volta de pasta; Select abre o
-   gerenciador de arquivos.
-4. Confira nas abas da NOR, Recentes e Favoritos.
-5. Pastas e arquivos sem capa mostram só o ícone. Nomes longos rolam na tela.
-6. Teste os três tamanhos de capa com o carrossel e diga qual ficou melhor.
-7. Volte para "Lista": a lista fica igual a antes.
+## 4. Conversor de vídeo (`conversor-video-superfw.zip` novo)
+1. Converta de novo o episódio de sempre com `--parts 2`:
+   `python3 gbvconv.py episodio.mkv --parts 2`.
+2. Veja as duas partes: as cenas com movimento e as transições (fades) devem estar
+   bem melhores que antes.
+3. Diga em que tipo de cena ainda fica ruim.

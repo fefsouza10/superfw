@@ -30,6 +30,7 @@
 #include "supercard_driver.h"
 #include "fatfs/ff.h"
 #include "directsave.h"
+#include "playtime.h"
 #include "common.h"
 #include "util.h"
 #include "flash_mgr.h"
@@ -154,6 +155,7 @@ void load_ingame_menu(
   igm->menu_has_rtc_support = rtc_patches;    // Using RTC patches
   igm->savefile_backups = backup_sram_default;// Backup count
   igm->sleep_keys = hotkey_list[sleep_combo].mask;
+  igm->playtime_base = playtime_session_base;
   {
     // SDRAM only takes 16/32 bit writes, build the string on the stack first.
     char kname[sizeof(igm->sleep_keys_name)] __attribute__((aligned(4)));

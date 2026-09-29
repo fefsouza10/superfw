@@ -46,6 +46,11 @@ trampoline_nocheats_handler:
   tst r1, $0x1                 // Check for V-Blank interrupt
   ldreq pc, [r0, #-12]         // No V-blank IRQ, resume executing the user's IRQ handler
 
+  mrs r2, CPSR                 // Count a frame of play time (FIQ mode regs)
+  msr CPSR_c, $0xD1
+  bl playtime_tick
+  msr CPSR_c, r2
+
   ldr r3, [r0, #REG_P1]        // It's actually a 16 bit reg really
   mrs r2, CPSR
   msr CPSR_c, $0x97            // Move to ABORT mode, to read LR.
@@ -63,14 +68,21 @@ trampoline_nocheats_handler:
   ldmia ip , {r0, r1, r2, r3}  // Load r0-r3 constants needed by the trampoline code
   sub pc, sp, $(4*4)           // Jump to SP-16 to execute the copied insts.
 
-  nop; nop; nop; nop
   nop; nop; nop;
+
+  // Fails to assemble if the handler above grows too much.
+  .org startup_entrypoint + FLASH_IGM_TRAMP_CHEATS_OFF
 
 .global trampoline_cheats_handler
 trampoline_cheats_handler:
   ldrb r1, [r0, #REG_IF]       // Just read the LSB byte (r0 is 0x04000000 from BIOS)
   tst r1, $0x1                 // Check for V-Blank interrupt
   ldreq pc, [r0, #-12]         // No V-blank IRQ, resume executing the user's IRQ handler
+
+  mrs r2, CPSR                 // Count a frame of play time (FIQ mode regs)
+  msr CPSR_c, $0xD1
+  bl playtime_tick
+  msr CPSR_c, r2
 
   // On V-Blank we need to process cheats, so we must switch mode.
 
@@ -84,7 +96,6 @@ trampoline_cheats_handler:
   ldmia ip , {r0, r1, r2, r3}  // Load r0-r3 constants needed by the trampoline code
   sub pc, sp, $(4*4)           // Jump to SP-16 to execute the copied insts.
 
-  nop; nop; nop; nop;
   nop; nop; nop; nop;
   nop; nop; nop; nop;
   nop;
@@ -112,4 +123,13 @@ tramp_cheats:
   .word 0x00000005
   .word IGM_ENTRYPOINT_CHEATS_OFF
 
-
+// Play time counter, runs in FIQ mode (see ingame.S)
+playtime_tick:
+  add r8, r8, $1
+  cmp r9, $0
+  bxeq lr
+  strb r8, [r9]
+  mov r10, r8, lsr #8;  strb r10, [r9, #1]
+  mov r10, r8, lsr #16; strb r10, [r9, #2]
+  mov r10, r8, lsr #24; strb r10, [r9, #3]
+  bx lr

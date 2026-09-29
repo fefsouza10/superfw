@@ -60,7 +60,8 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 | I | Economia de bateria no menu (CPU parada no V-blank) | Pronto p/ teste no hardware | 9 |
 | J | EWRAM rápida por jogo + teste mais forte | Planejado (o overclock global dá bugs no SP do Felipe) | 10 |
 | K | Carrossel de capas (estilo DSPico) | Pronto p/ teste no hardware (validado no emulador) | 11 |
-| L | Tempo de jogo, papel de parede (por último) | Planejado | 12 |
+| L | Tempo de jogo | Pronto p/ teste no hardware (validado no emulador); próxima versão | 12 |
+| M | Papel de parede (por último) | Planejado | 13 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -233,6 +234,38 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-09-29 — Tempo de jogo (próxima versão)
+
+Contagem por quadros, sem RTC:
+- O gancho de V-blank do in-game menu (`src/ingame.S`, e os dois handlers do
+  trampolim da NOR em `src/ingame_trampoline.S`) conta cada quadro no r8 do modo
+  FIQ. O GBA não tem fonte de FIQ, e nada no jogo nem na FW usa r8-r12 desse modo;
+  os savestates só guardam sp/lr/spsr, então carregar um state não mexe no
+  contador. Suspender e o próprio IGM não geram V-blank, então não contam.
+- Se o r9 do FIQ não é zero, o contador também é espelhado (4 bytes) na SRAM,
+  banco 0, offset 0xFFD0 (logo abaixo da config do DirectSave). Só para jogos sem
+  save, SRAM ou EEPROM, que não usam o fim do banco 0. O loader guarda os 4 bytes
+  originais em `/.superfw/playtime-session.txt` e o boot devolve esses bytes antes
+  do `check_pending_saves`, então o `.sav` não muda.
+- Jogos com save Flash: o IGM grava o contador em `/.superfw/playtime-igm.txt`
+  depois de desenhar o primeiro quadro do menu.
+- No boot, `playtime_flush()` soma max(SRAM, arquivo do IGM) em
+  `/.superfw/playtime.txt` ("quadros chave"; chave = caminho da ROM ou
+  `nor:<nome>`), reescrito por um arquivo temporário. O t_igmenu ganhou
+  `playtime_base` (total anterior) para o IGM mostrar o total.
+- Tela de informações da ROM: linha "Tempo de jogo: 12h 05m" (o texto sobe 8 px
+  quando ela aparece). IGM: "12h 05m jogados" à direita de "Voltar ao jogo".
+- `EMU_HARNESS=1` agora vale também para o IGM (o SD simulado funciona lá).
+- Testado no harness: jogo sem save (espelho na SRAM, somado ao voltar ao menu),
+  jogo SRAM com `.sav` marcado em 0xFFD0 (arquivo idêntico depois da sessão) e
+  jogo Flash 128K (arquivo do IGM, somado depois de "desligar" = nova execução).
+  O trampolim da NOR não roda no harness: falta testar no GBA SP.
+- Tamanhos: sd 523264 de 524288 bytes (sobra 1 KB), lite 491008, chis ok.
+- Arquivos: `src/playtime.c/.h` (novo), `src/ingame.S`, `src/ingame_trampoline.S`,
+  `src/ingame_menu.c`, `src/ingame.h`, `src/asmutil.S`, `src/loader.c`,
+  `src/main.c`, `src/menu.c`, `src/config.h`, `res/messages.py`, `res/lang/pt.json`,
+  `res/lang/es.json`, `Makefile`, README (EN/PT).
 
 ### 2026-09-29 — Conversor: paleta nos fades, keyframes e --parts (próxima versão)
 

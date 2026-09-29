@@ -117,6 +117,25 @@ What's new in this fork
 - The menu now halts the CPU while it waits for the next video frame, instead of
   busy-polling the display. This saves battery without changing anything else.
 
+### Play time
+- SuperFW counts how long you play each game. The total shows on the ROM
+  information page ("Play time: 12h 05m") and, while playing, next to "Resume
+  game" in the in-game menu.
+- It needs the in-game menu enabled for the game (it counts the frames in its
+  V-blank hook). Time in the in-game menu, in sleep mode or in the SuperFW menu
+  is not counted.
+- Games with no save, SRAM or EEPROM saves keep the counter in 4 spare bytes at the
+  end of the SRAM, so you can just turn the console off: the time is added at the
+  next boot, and the bytes are restored before the save is written to the SD card.
+- Games with Flash saves (Pokémon, for example) use all of their SRAM, so the
+  counter is written to the SD card when you open the in-game menu. Open it before
+  turning the console off (or use Reset / Save and quit) so no time is lost.
+- NOR games count too, with the trampoline that comes with the firmware (flash
+  the firmware; running it as `.gba` does not update it). Games over 28MB flashed
+  with an older version need to be written to NOR again.
+- The times live in `/.superfw/playtime.txt` (one "frames path" line per game,
+  NOR games as `nor:<name>`). Moving or renaming a ROM starts a new count.
+
 ### IPS, UPS and BPS soft-patching
 - To play a translation or a ROM hack without modifying the ROM, put the patch
   next to the ROM with the same name: `Game.gba` + `Game.ips` (or `.ups`, or
@@ -441,6 +460,26 @@ Novidades deste fork
 - O menu agora deixa a CPU parada enquanto espera o próximo quadro da tela, em vez
   de ficar consultando o vídeo sem parar. Isso gasta menos pilha sem mudar nada no
   uso.
+
+### Tempo de jogo
+- A SuperFW conta quanto tempo você joga cada jogo. O total aparece na tela de
+  informações da ROM ("Tempo de jogo: 12h 05m") e, durante o jogo, ao lado de
+  "Voltar ao jogo" no in-game menu.
+- Precisa do in-game menu ativado para o jogo (a contagem é feita no gancho de
+  V-blank dele). O tempo no in-game menu, no modo suspender ou no menu da SuperFW
+  não conta.
+- Jogos sem save, com save SRAM ou EEPROM guardam o contador em 4 bytes livres no
+  fim da SRAM, então dá para só desligar o console: o tempo é somado no próximo
+  boot, e os bytes originais voltam antes de o save ser gravado no SD.
+- Jogos com save Flash (Pokémon, por exemplo) usam a SRAM inteira, então o
+  contador é gravado no SD quando você abre o in-game menu. Abra o menu antes de
+  desligar (ou use Reiniciar / Salvar e sair) para não perder tempo.
+- Jogos da NOR também contam, com o trampolim que vem na firmware (grave a
+  firmware; rodando como `.gba` ele não é atualizado). Jogos com mais de 28 MB
+  gravados com uma versão antiga precisam ser gravados na NOR de novo.
+- Os tempos ficam em `/.superfw/playtime.txt` (uma linha "quadros caminho" por
+  jogo, jogos da NOR como `nor:<nome>`). Mover ou renomear a ROM começa uma
+  contagem nova.
 
 ### Patches IPS, UPS e BPS na hora de carregar (soft-patching)
 - Para jogar uma tradução ou um ROM hack sem alterar a ROM, basta colocar o patch

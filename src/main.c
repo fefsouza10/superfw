@@ -21,6 +21,7 @@
 #include "gbahw.h"
 #include "settings.h"
 #include "save.h"
+#include "playtime.h"
 #include "patchengine.h"
 #include "supercard_driver.h"
 #include "nanoprintf.h"
@@ -223,6 +224,9 @@ static int main_gba() {
   // This hangs on failure since it is fatal.
   init_sdcard_and_mount();
 
+  // Add the last session's play time (restores the SRAM bytes it used).
+  playtime_flush();
+
   // Check if we need to save SRAM before doing anything else.
   check_pending_saves();
 
@@ -280,6 +284,9 @@ static int main_nds() {
   // Mount SD card.
   set_supercard_mode(MAPPED_SDRAM, true, true);
   init_sdcard_and_mount();
+
+  // Add the last session's play time (restores the SRAM bytes it used).
+  playtime_flush();
 
   // Check if we need to save SRAM before doing anything else.
   check_pending_saves();

@@ -43,6 +43,7 @@ FWBINFILES=firmware.ewram.gba res/patches.db res/fonts.pack
 
 ifeq ($(EMU_HARNESS),1)
   PAYLOADFLAGS += -DEMU_HARNESS
+  INGAMEFLAGS += -DEMU_HARNESS
 endif
 
 ifeq ($(ENABLE_DISK_LOGGING),1)
@@ -92,7 +93,7 @@ CFLAGS=-O2 -ggdb \
 
 
 INGAME_CFLAGS=-Os -ggdb \
-              $(BASEFLAGS) \
+              $(BASEFLAGS) $(INGAMEFLAGS) \
               -DNO_SUPERCARD_INIT \
               -DSD_PREERASE_BLOCKS_WRITE \
               -Wall -Isrc -I. \
@@ -154,6 +155,7 @@ INFILES=src/gba_ewram_crt0.S \
         src/recent.c \
         src/coverart.c \
         src/softpatch.c \
+        src/playtime.c \
         src/cheats.c \
         src/flash.c \
         src/sha256.c \

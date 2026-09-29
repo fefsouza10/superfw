@@ -30,6 +30,9 @@
 #include "supercard_driver.h"
 #include "res/icons-menu.h"
 #include "ingame.h"
+#include "config.h"
+#define NO_PLAYTIME_DB
+#include "playtime.h"
 
 #include "directsave.h"
 
@@ -47,6 +50,7 @@ extern uint16_t ingame_menu_palette[8];
 extern uint32_t savefile_backups;                // Num of save backups to create
 extern uint32_t sleep_wake_keys;                 // Wake up combo (KEYINPUT mask)
 extern char sleep_keys_name[];                   // Wake up combo name
+extern uint32_t playtime_base;                   // Play time before this session (frames)
 extern uint32_t scratch_base, scratch_size;      // Space to write snapshots (in memory)
 extern uint32_t spill_addr;                      // Spill buffer that gets reloaded on IGM exit
 extern char savefile_pattern[256];
@@ -57,6 +61,8 @@ void reset_fw();
 void set_undef_lrsp(uint32_t, uint32_t);
 uint32_t get_undef_lr(void);
 uint32_t get_undef_sp(void);
+uint32_t get_playtime_frames(void);
+uint32_t get_playtime_sram(void);
 void fast_mem_cpy_256(void *dst, const void *src, unsigned count);
 void fast_mem_clr_256(void *addr, uint32_t value, unsigned count);
 void set_entrypoint_hook(bool process_cheats);
@@ -619,6 +625,13 @@ void draw_main_menu(uint8_t *fb, unsigned framen) {
       tmp[n++] = *k;
     tmp[n++] = ')'; tmp[n] = 0;
     draw_text_ovf(tmp, fb, 24, 36 + 17*6, 208, HI_COLOR);
+  }
+  {
+    // Total play time, right aligned in the first row
+    char ts[16], tmp[48];
+    playtime_format(playtime_base + get_playtime_frames(), ts);
+    npf_snprintf(tmp, sizeof(tmp), msgs[ingame_menu_lang][IMENU_PLAYTIME], ts);
+    draw_text(tmp, fb, SCREEN_WIDTH - 8 - font_width(tmp), 36, SH_COLOR);
   }
 
   selbarpos = 36 + 17*copt;
@@ -1262,6 +1275,20 @@ void ingame_menu_blocked(uint32_t *use_cheats_hook) {
 }
 
 
+// Writes the frames played in this session, read at the next boot.
+static void save_playtime() {
+  char tmp[16];
+  unsigned l = npf_snprintf(tmp, sizeof(tmp), "%u", (unsigned)get_playtime_frames());
+  set_supercard_mode(MAPPED_SDRAM, true, true);
+  FIL fd;
+  if (FR_OK == f_open(&fd, PLAYTIME_IGM_FILEPATH, FA_WRITE | FA_CREATE_ALWAYS)) {
+    UINT wr;
+    f_write(&fd, tmp, l, &wr);
+    f_close(&fd);
+  }
+  set_supercard_mode(MAPPED_SDRAM, true, false);
+}
+
 void ingame_menu_loop(uint32_t *use_cheats_hook) {
   setup_video_frame();
 
@@ -1279,6 +1306,7 @@ void ingame_menu_loop(uint32_t *use_cheats_hook) {
   f_mount(&fs, "0:", 0);   // Does not actually mount stuff nor access the card
 
   uint16_t pk = 0xFFFF;    // Ensure we capture keys completely (avoid bouncing).
+  bool ptime_saved = false;
   copt = 0;
   submenu = 0;
   state_slot = num_mem_savestates ? 0 : -1;
@@ -1364,6 +1392,14 @@ void ingame_menu_loop(uint32_t *use_cheats_hook) {
 
     // Flip frame
     REG_DISPCNT = (REG_DISPCNT & ~0x10) | (framen << 4);
+
+    // Games without the SRAM mirror store the play time now (once the menu
+    // is on screen), so it survives turning the console off.
+    if (!ptime_saved) {
+      ptime_saved = true;
+      if (!get_playtime_sram())
+        save_playtime();
+    }
   }
 
   // Unmount the device, ensure everything is in order

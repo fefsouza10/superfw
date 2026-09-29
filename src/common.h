@@ -170,6 +170,7 @@ void rom_copy_write16(void *dst, const void *src, unsigned cnt);
 int check_erased_32xff(const void *buffer, unsigned blk32cnt);
 void set_undef_lrsp(uint32_t lr, uint32_t sp);
 void set_abort_lr(uint32_t value);
+void set_fiq_regs(uint32_t r8, uint32_t r9);
 
 // Decompress (WRAM version), returns written bytes
 unsigned apunpack8(const uint8_t *src, uint8_t *dst);

@@ -58,6 +58,7 @@ typedef struct {
   uint32_t savefile_backups;           // Backup count
   uint32_t sleep_keys;                 // Sleep mode wake up combo (KEYINPUT mask)
   char sleep_keys_name[20];            // Wake up combo name
+  uint32_t playtime_base;              // Play time before this session (frames)
   char savefile_pattern[256];          // File name (without the .sav) pattern
   char statefile_pattern[256];         // File name (without the .X.state) pattern
 } t_igmenu;

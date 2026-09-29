@@ -71,6 +71,19 @@ START_THUMB_FUNC(set_abort_lr)
   msr CPSR_c, r2       // Restore original model and CPSR
   bx lr
 
+// Writes the FIQ mode r8/r9 registers (play time frame counter and the SRAM
+// address where the in-game menu hook mirrors it, or zero).
+START_THUMB_FUNC(set_fiq_regs)
+  mov r2, pc; bx r2    // Go into arm mode
+  .arm
+
+  mrs r2, CPSR         // Save the current CPSR
+  msr CPSR_c, $0xD1    // Move to FIQ mode (no IRQs/FIQs)
+  mov r8, r0           // Frame counter
+  mov r9, r1           // SRAM mirror address
+  msr CPSR_c, r2       // Restore original model and CPSR
+  bx lr
+
 #ifdef SUPPORT_NORGAMES
 // Performs a quick check on a buffer for 0xFF values (aligned in 32 byte blocks)
 START_THUMB_FUNC(check_erased_32xff)

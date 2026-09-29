@@ -71,6 +71,7 @@
 .globl savefile_backups
 .globl sleep_wake_keys
 .globl sleep_keys_name
+.globl playtime_base
 .globl cheat_base_addr
 .globl spill_addr
 .globl savefile_pattern
@@ -128,6 +129,7 @@ ingame_menu_palette:   .fill 8,2,0  // Filled with background, foreground and se
 savefile_backups:      .word 0x0    // Fill the number of backups to preserve.
 sleep_wake_keys:       .word 0x0    // Sleep mode wake up combo (KEYINPUT style mask)
 sleep_keys_name:       .fill 20, 1, 0           // Wake up combo name (NULL terminated)
+playtime_base:         .word 0x0                // Play time before this session (frames)
 
 savefile_pattern:      .fill 256, 1, 0          // File name pattern (NULL terminated)
 savestate_pattern:     .fill 256, 1, 0          // File name pattern (NULL terminated)
@@ -193,6 +195,39 @@ restore_spill_data:
   bne restore_spill_data
   bx lr
 
+// Play time counter, runs in FIQ mode (its banked r8-r10 are free on the GBA)
+// r8: frame counter, r9: SRAM address to mirror it to (or zero).
+playtime_tick:
+  add r8, r8, $1
+  cmp r9, $0
+  bxeq lr
+  strb r8, [r9]
+  mov r10, r8, lsr #8;  strb r10, [r9, #1]
+  mov r10, r8, lsr #16; strb r10, [r9, #2]
+  mov r10, r8, lsr #24; strb r10, [r9, #3]
+  bx lr
+
+// Counts one frame, clobbers r2 (and FIQ mode's lr and r10)
+#define PLAYTIME_TICK                                        \
+  mrs r2, CPSR;                                              \
+  msr CPSR_c, $0xD1;          /* FIQ mode, no IRQs/FIQs */   \
+  bl playtime_tick;                                          \
+  msr CPSR_c, r2;
+
+def_function(get_playtime_frames):
+  mrs r2, CPSR
+  msr CPSR_c, $0xD1
+  mov r0, r8
+  msr CPSR_c, r2
+  bx lr
+
+def_function(get_playtime_sram):
+  mrs r2, CPSR
+  msr CPSR_c, $0xD1
+  mov r0, r9
+  msr CPSR_c, r2
+  bx lr
+
 .balign 8
 ingame_menu_entrypoint_nocheats:
 
@@ -201,6 +236,8 @@ ingame_menu_entrypoint_nocheats:
   ldrb r1, [r0, #REG_IF]     // Just read the LSB byte
   tst r1, $0x1               // Check for V-Blank interrupt
   ldreq pc, [r0, #-12]       // No V-blank IRQ, resume executing the user's IRQ handler
+
+  PLAYTIME_TICK
 
   ldr r2, (ingame_menu_hotkey + 2)    // Read mask from constant pool (rotate by 16)
   ldr r1, [r0, #REG_P1]      // It's actually a 16 bit reg really
@@ -214,6 +251,8 @@ ingame_menu_entrypoint_cheats:
   ldrb r1, [r0, #REG_IF]     // Just read the LSB byte
   tst r1, $0x1               // Check for V-Blank interrupt
   ldreq pc, [r0, #-12]       // No V-blank IRQ, resume executing the user's IRQ handler
+
+  PLAYTIME_TICK
 
   // Process cheat code, this is V-Blank!
   push {r5-r6, lr}

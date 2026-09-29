@@ -45,6 +45,10 @@
 #define FLASHBACKUP_FILEPTRN      "/.superfw/flash_backup-%02x%02x%02x%02x.bin"
 
 #define PENDING_SAVE_FILEPATH     "/.superfw/pending-save.txt"
+#define PLAYTIME_FILEPATH         "/.superfw/playtime.txt"
+#define PLAYTIME_TMP_FILEPATH     "/.superfw/playtime.tmp"
+#define PLAYTIME_SESSION_FILEPATH "/.superfw/playtime-session.txt"
+#define PLAYTIME_IGM_FILEPATH     "/.superfw/playtime-igm.txt"
 #define PENDING_SRAM_TEST         "/.superfw/pending-sram-test.txt"
 
 #endif

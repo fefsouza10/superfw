@@ -43,6 +43,7 @@
 #include "supercard_driver.h"
 #include "coverart.h"
 #include "softpatch.h"
+#include "playtime.h"
 
 #include "res/icons.h"
 #include "res/logo.h"
@@ -863,6 +864,14 @@ static void prepare_gba_settings(t_load_gba_lcfg *data, bool uses_dsaving, uint3
 }
 
 
+// Play time of the game shown in the load popup (frames, zero if never played)
+static uint32_t popup_playtime;
+
+// Play time database key for NOR games (SD games use the ROM path)
+static void nor_playtime_key(char *key, const char *game_name) {
+  npf_snprintf(key, MAX_FN_LEN, "nor:%s", game_name);
+}
+
 static void browser_open_gba(const char *fn, uint32_t fs, bool prompt_patchgen) {
   if (fs > MAX_GBA_ROM_SIZE) {
     // The ROM is too big to be loaded!
@@ -918,6 +927,8 @@ static void browser_open_gba(const char *fn, uint32_t fs, bool prompt_patchgen) 
       sram_filename_calc(fn, spop.p.load.l.savefn, save_path_default);
       prepare_gba_settings(&spop.p.load.l, spop.p.load.i.use_dsaving, lh_sett.rtcts, game_no_save);
 
+      popup_playtime = playtime_get(fn);
+
       // Show load ROM menu.
       spop.pop_num = POPUP_GBA_LOAD;
       spop.anim = 0;
@@ -951,6 +962,10 @@ static void browser_open_nor(const t_flash_game_entry * e) {
 
   // Save entry pointer
   spop.p.norld.e = e;
+
+  char ptkey[MAX_FN_LEN];
+  nor_playtime_key(ptkey, e->game_name);
+  popup_playtime = playtime_get(ptkey);
 
   // Show load ROM menu.
   spop.pop_num = POPUP_GBA_NORLOAD;
@@ -1905,25 +1920,35 @@ void render_sav_menu_popup(volatile uint8_t *frame) {
 }
 
 static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
-                               bool issf, const char *gcode, uint8_t ver, int save_type) {
+                               bool issf, const char *gcode, uint8_t ver, int save_type,
+                               uint32_t ptime) {
   char tmp[64];
   draw_central_text(msgs[lang_id][MSG_GBALOAD_MINFO], frame, SCREEN_WIDTH/2, 23);
+
+  // Make room for the play time line (moves the info up a bit)
+  const unsigned ofy = ptime ? 8 : 0;
+  if (ptime) {
+    char ts[16];
+    playtime_format(ptime, ts);
+    npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_PLAYTIME], ts);
+    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 98, SCREEN_WIDTH - 20);
+  }
 
   const char *romname = file_basename(dispname);
   unsigned twidth = font_width(romname);
   if (twidth > SCREEN_WIDTH - 20)
-    draw_text_ovf_rotate(romname, frame, 10, 52,
+    draw_text_ovf_rotate(romname, frame, 10, 52 - ofy,
                          SCREEN_WIDTH - 20, &spop.anim);
   else
-    draw_central_text_ovf(romname, frame, SCREEN_WIDTH/2, 52, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(romname, frame, SCREEN_WIDTH/2, 52 - ofy, SCREEN_WIDTH - 20);
 
   npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_GAME], gcode, ver);
-  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 78, SCREEN_WIDTH - 20);
+  draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 78 - 2*ofy, SCREEN_WIDTH - 20);
 
   if (save_type < 0)
-    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(msgs[lang_id][MSG_LOADINFO_UNKW], frame, SCREEN_WIDTH/2, 96 - 2*ofy, SCREEN_WIDTH - 20);
   else if (issf)
-    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
+    draw_central_text_ovf("SuperFW firmware", frame, SCREEN_WIDTH/2, 96 - 2*ofy, SCREEN_WIDTH - 20);
   else {
     const char *stype[] = {
       msgs[lang_id][MSG_SAVETYPE_NONE],       // SaveTypeNone
@@ -1943,7 +1968,7 @@ static void render_gbarom_info(volatile uint8_t *frame, const char *dispname,
     };
 
     npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_LOADINFO_SAVE], stype[save_type], ssize[save_type]);
-    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 96, SCREEN_WIDTH - 20);
+    draw_central_text_ovf(tmp, frame, SCREEN_WIDTH/2, 96 - 2*ofy, SCREEN_WIDTH - 20);
   }
 
   draw_box_full(frame, 20, 220, 132, 152, FG_COLOR, HI_COLOR);
@@ -2013,7 +2038,7 @@ void render_gba_load_popup(volatile uint8_t *frame) {
   switch (spop.submenu) {
   case GbaLoadPopInfo:
     render_gbarom_info(frame, info->romfn, is_superfw(&info->romh), info->gcode,
-                       info->romh.version, p ? p->save_mode : -1);
+                       info->romh.version, p ? p->save_mode : -1, popup_playtime);
     if (info->spatch_found) {
       char tmp[64];
       const char *ptn[] = { "", "IPS", "UPS", "BPS" };
@@ -2157,7 +2182,7 @@ void render_gba_norwrite(volatile uint8_t *frame) {
     const t_load_gba_info *info = &spop.p.norwr.i;
     const t_patch *p = get_game_patch(info);
     render_gbarom_info(frame, info->romfn, is_superfw(&info->romh),
-                       info->gcode, info->romh.version, p ? p->save_mode : -1);
+                       info->gcode, info->romh.version, p ? p->save_mode : -1, 0);
     draw_central_text(msgs[lang_id][MSG_NOR_WRITE], frame, 120, 134);
   } else {
     const char *ht = render_gbarom_patching(frame, &spop.p.norwr.i, spop.selector);
@@ -2188,7 +2213,7 @@ void render_gba_norload(volatile uint8_t *frame) {
     char gcode[5] = {
       e->gamecode & 0xFF, (e->gamecode >> 8) & 0xFF, (e->gamecode >> 16) & 0xFF, e->gamecode >> 24, 0
     };
-    render_gbarom_info(frame, e->game_name, false, gcode, e->gamever, save_type);
+    render_gbarom_info(frame, e->game_name, false, gcode, e->gamever, save_type, popup_playtime);
     draw_central_text(msgs[lang_id][MSG_NOR_LAUNCH], frame, 120, 134);
   } else {
     bool rtc_patching = e->gattrs & GATTR_RTC;
@@ -2988,6 +3013,10 @@ static void keypress_popup_loadgba(unsigned newkeys) {
         .ts_step = rtcspeed_default
       };
 
+      // Play time is counted by the in-game menu hook.
+      if (spop.p.load.i.ingame_menu_enabled)
+        playtime_start(spop.p.load.i.romfn, p ? p->save_mode : -1);
+
       unsigned err = load_gba_rom(
         spop.p.load.i.romfn, spop.p.load.i.romfs,
         spop.p.load.l.sram_save_type == SaveDisable ? NULL : spop.p.load.l.savefn, p,
@@ -3248,6 +3277,12 @@ static void keypress_popup_norload(unsigned newkeys) {
 
       if (recent_menu)
         insert_recent_flush(e->game_name, FLAG_RECENT_NOR);
+
+      if (uses_igm) {
+        char ptkey[MAX_FN_LEN];
+        nor_playtime_key(ptkey, e->game_name);
+        playtime_start(ptkey, stype);
+      }
 
       // TODO Handle errors, finish missing stuff.
       unsigned err = launch_gba_nor(

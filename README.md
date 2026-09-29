@@ -155,6 +155,9 @@ What's new in this fork
   Conversion takes about as long as the video itself (about 20 minutes for a
   20-minute episode), with live progress (and an animated Game Boy Advance) in
   the terminal.
+- Long videos squeeze a lot of minutes into 31MB, so fast scenes get blocky.
+  `--parts 2` splits the video in two files ("Name (1 of 2).gbv", ...), each
+  with the full 31MB, for a much sharper picture.
 - The current format (GBV2) reuses the parts of the picture that did not change
   or only moved, so it looks much sharper than the first version at the same
   size. Files made with the old converter still play, but reconvert them to get
@@ -477,6 +480,9 @@ Novidades deste fork
   A conversão leva mais ou menos o tempo do próprio vídeo (uns 20 minutos para
   um episódio de 20 minutos), com o progresso (e um Game Boy Advance animado) no
   terminal. As mensagens do conversor são em inglês.
+- Vídeos longos espremem muitos minutos em 31 MB, então as cenas rápidas ficam
+  quadriculadas. `--parts 2` divide o vídeo em dois arquivos ("Nome (1 of
+  2).gbv", ...), cada um com os 31 MB inteiros, e a imagem fica bem mais nítida.
 - O formato atual (GBV2) reaproveita as partes da imagem que não mudaram ou só se
   moveram, então fica bem mais nítido que a primeira versão no mesmo tamanho.
   Arquivos feitos com o conversor antigo continuam tocando, mas vale convertê-los

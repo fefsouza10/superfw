@@ -158,6 +158,10 @@ class Ui:
       self.draw()
 
   def start(self):
+    # Can be called again after finish() (one progress screen per part).
+    self.stop.clear()
+    self.lines = 0
+    self.state.update(stage="Starting", progress=0.0, info="")
     if self.tty:
       self.draw()
       self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -423,6 +427,13 @@ class VideoEncoder:
     lam = math.exp(hi_l)
     self.lam = min(max(lam, 0.05), 1e6)
     mo, so, sog, som, _ = decide(lam)
+    if os.environ.get("GBV_STATS"):
+      st = getattr(VideoEncoder, "stats", None)
+      if st is None:
+        st = VideoEncoder.stats = {"mo": np.zeros(8), "so": np.zeros(4)}
+      st["mo"] += np.bincount(mo.ravel(), minlength=8)
+      sel = np.concatenate([so[mo == 2].ravel(), sog[mo == 4].ravel(), som[mo == 6].ravel()])
+      st["so"] += np.bincount(sel, minlength=4)
 
     # Bitstream and the decoded picture (exactly what the player does)
     out = self.pages[self.cur].copy()
@@ -478,12 +489,18 @@ class VideoEncoder:
 
 # ---------------------------------------------------------------- Main ---
 
-def read_frames(ff, fn, w, h, fps_out):
+def clip_args(args):
+  # ffmpeg input options that select the part being converted (--parts).
+  if getattr(args, "part_len", None) is None:
+    return []
+  return ["-ss", "%.3f" % args.part_start, "-t", "%.3f" % args.part_len]
+
+def read_frames(ff, fn, w, h, fps_out, clip=()):
   vf = ("scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos,"
         "pad=%d:%d:(ow-iw)/2:(oh-ih)/2" % (w, h, w, h))
   if fps_out:
     vf += ",fps=%f" % fps_out
-  p = subprocess.Popen([ff, "-v", "error", "-i", fn, "-vf", vf, "-f", "rawvideo",
+  p = subprocess.Popen([ff, "-v", "error", *clip, "-i", fn, "-vf", vf, "-f", "rawvideo",
                         "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
   fsz = w * h * 3
   while True:
@@ -493,10 +510,10 @@ def read_frames(ff, fn, w, h, fps_out):
     yield np.frombuffer(buf, np.uint8).reshape(h, w, 3)
   p.wait()
 
-def read_audio(ff, fn, rate):
+def read_audio(ff, fn, rate, clip=()):
   # ffmpeg only takes whole sample rates. The player rate (16777216 / timer
   # reload) is within 0.05 Hz of it, a few ms of drift over 20 minutes.
-  p = subprocess.run([ff, "-v", "error", "-i", fn, "-vn", "-ac", "1", "-ar", str(int(round(rate))),
+  p = subprocess.run([ff, "-v", "error", *clip, "-i", fn, "-vn", "-ac", "1", "-ar", str(int(round(rate))),
                       "-f", "s16le", "-"], capture_output=True)
   if p.returncode or not p.stdout:
     raise RuntimeError("could not decode the audio track: " +
@@ -530,7 +547,7 @@ def encode(args, budget_scale, ui, attempt, media):
   passtxt = "" if attempt == 0 else " (pass %d)" % (attempt + 1)
   if spv:
     ui.update(stage="Reading audio" + passtxt, progress=0.0, info="")
-  samples = read_audio(ff, args.input, spv * VBLANK_HZ) if spv else None
+  samples = read_audio(ff, args.input, spv * VBLANK_HZ, clip_args(args)) if spv else None
   ui.update(stage="Converting" + passtxt, progress=0.0,
             info="video budget %.1f KB/s" % (per_vblank * VBLANK_HZ / 1024))
   aenc = AdpcmEncoder()
@@ -558,7 +575,13 @@ def encode(args, budget_scale, ui, attempt, media):
     frames_out += 1
 
   gop, gop_pal, gop_lut, gop_len = [], None, None, 0
-  src_iter = read_frames(ff, args.input, w, h, fps_out)
+  pal_err0 = 0.0        # Palette error of the frame the palette was made from
+
+  def pal_err(lut, pal, f5):
+    # Mean squared error of a frame subsample mapped to the palette.
+    c = f5[::4, ::4]
+    return float(((pal[lut[c[..., 0] * 1024 + c[..., 1] * 32 + c[..., 2]]] - c) ** 2).sum(-1).mean())
+  src_iter = read_frames(ff, args.input, w, h, fps_out, clip_args(args))
   prev_small = None
   frame_no = 0
   spent = 0
@@ -579,12 +602,19 @@ def encode(args, budget_scale, ui, attempt, media):
 
     # Scene cut or GOP too long -> new palette + keyframe
     newgop = gop_pal is None or gop_len >= args.gop * fps
+    # The palette only changes on keyframes. When the picture drifts away from
+    # it (fades, lighting changes, new characters) the colors go wrong, so
+    # start a new group once it maps much worse than when it was made.
+    if not newgop and gop_len >= fps / 4:
+      if pal_err(gop_lut, gop_pal, rgb5) > max(2.5 * pal_err0, pal_err0 + 2.0):
+        newgop = True
     if prev_small is not None and np.abs(small - prev_small).mean() > args.scene:
       newgop = True
     prev_small = small
     if newgop:
       gop_pal = make_palette([frame])
       gop_lut = make_lut(gop_pal)
+      pal_err0 = pal_err(gop_lut, gop_pal, rgb5)
       gop_len = 0
       intra_left = 2
 
@@ -595,6 +625,10 @@ def encode(args, budget_scale, ui, attempt, media):
         pending[1] += dur
         vb_time = t_end
         gop_len += 1
+        if os.environ.get("GBV_DEBUG"):
+          dec = gop_pal[venc.pages[venc.cur ^ 1]]
+          mse = float(((dec - rgb5) ** 2).mean()) + 1e-6
+          sys.stderr.write("M %d %.2f\n" % (frame_no, 10 * math.log10(31 * 31 / mse)))
         continue
 
     if pending:
@@ -608,11 +642,22 @@ def encode(args, budget_scale, ui, attempt, media):
     debt = max(spent - per_vblank * t_start, -per_vblank * 600)
     target = base - debt * dur / 180
     target = min(max(target, base * 0.25), base * (8 if intra == 2 else 4))
+    if intra == 2:
+      # A keyframe has nothing to copy from: starving it leaves the whole
+      # group blocky, since the next frames can only copy its mistakes.
+      target = max(target, base * 4)
     target = min(target, MAX_VBLANK_BYTES * dur)    # Keeps the decoder on time
     vbytes, lam = venc.encode(rgb5, gop_pal, gop_lut, intra, target)
     spent += len(vbytes) + (512 if newgop else 0) + 8
     if os.environ.get("GBV_DEBUG"):
-      sys.stderr.write("%d %d %d %.2f %d\n" % (frame_no, len(vbytes), int(target), lam, int(debt)))
+      dec = gop_pal[venc.pages[venc.cur ^ 1]]
+      mse = float(((dec - rgb5) ** 2).mean()) + 1e-6
+      sys.stderr.write("%d %d %d %.2f %d %.2f\n" % (frame_no, len(vbytes), int(target), lam, int(debt),
+                                                   10 * math.log10(31 * 31 / mse)))
+      dumps = os.environ.get("GBV_DUMP", "")
+      if dumps and str(frame_no) in dumps.split(","):
+        Image.fromarray((np.concatenate([dec, rgb5], 1) * 8).astype(np.uint8)).save(
+          os.environ.get("GBV_DUMPDIR", ".") + "/f%05d.png" % frame_no)
 
     flags = 0
     pb = b""
@@ -638,11 +683,20 @@ def encode(args, budget_scale, ui, attempt, media):
 
   if pending:
     flush()
+  if os.environ.get("GBV_STATS"):
+    st = VideoEncoder.stats
+    sys.stderr.write("MB modes skip/fill/split/gcopy/gcopy+ref/mv/mv+ref/half: %s\n" %
+                     " ".join("%.1f%%" % (100 * v / st["mo"].sum()) for v in st["mo"]))
+    sys.stderr.write("4x4 sub-ops keep/fill/2col/raw: %s\n" %
+                     " ".join("%.1f%%" % (100 * v / st["so"].sum()) for v in st["so"]))
   index_off = len(out)
   out += struct.pack("<I", len(index))
   for f, o, t in index:
     out += struct.pack("<III", f, o, t)
-  title = os.path.splitext(os.path.basename(args.input))[0].encode("utf-8")[:39]
+  title = os.path.splitext(os.path.basename(args.input))[0]
+  if getattr(args, "part_len", None) is not None:
+    title = "%s %d/%d" % (title, args.part_no, args.parts)
+  title = title.encode("utf-8")[:39]
   out[:HDR_SIZE] = struct.pack("<4sHHHHIII40s", b"GBV2", w, h, spv, 0, frames_out, index_off,
                                vb_time, title)
   return bytes(out), max_bytes
@@ -661,7 +715,11 @@ def main():
   ap.add_argument("--gop", type=float, default=10, help="Seconds between keyframes (seek points)")
   ap.add_argument("--scene", type=float, default=28, help="Scene cut threshold")
   ap.add_argument("--still", type=float, default=0.3, help="Merge source frames that change less than this")
+  ap.add_argument("--parts", type=int, default=1,
+                  help="Split the video in this many files, each one up to the size limit "
+                       "(2 parts = twice the bytes per minute = a much sharper picture)")
   args = ap.parse_args()
+  args.parts = max(1, args.parts)
   if not args.output:
     args.output = os.path.splitext(args.input)[0] + ".gbv"
 
@@ -689,29 +747,46 @@ def main():
           ("Size limit", "%.1f MB" % args.max_mb))
 
   t0 = time.time()
-  ui.start()
-  scale = 1.0
-  try:
-    for attempt in range(4):
-      data, maxb = encode(args, scale, ui, attempt, media)
-      if len(data) <= maxb:
-        break
-      scale *= maxb / len(data) * 0.97
-      ui.update(stage="Too big (%.1f MB), retrying with less quality" % (len(data) / 1048576),
-                progress=0.0)
-    ui.update(stage="Done!", progress=1.0, info="")
-  except KeyboardInterrupt:
-    ui.fail("cancelled by the user.")
-  except RuntimeError as e:
-    ui.fail(str(e))
-  ui.finish()
-  open(args.output, "wb").write(data)
+  outputs = []
+  for part in range(args.parts):
+    output = args.output
+    pmedia = media
+    if args.parts > 1:
+      plen = duration / args.parts
+      args.part_start, args.part_len, args.part_no = part * plen, plen, part + 1
+      pmedia = (plen, fps, has_audio)
+      base, ext = os.path.splitext(args.output)
+      output = "%s (%d of %d)%s" % (base, part + 1, args.parts, ext)
+      print("  Part %d of %d: %s to %s -> %s" % (part + 1, args.parts, fmt_time(args.part_start),
+                                               fmt_time(args.part_start + plen), output))
+    ui.start()
+    scale = 1.0
+    try:
+      for attempt in range(4):
+        data, maxb = encode(args, scale, ui, attempt, pmedia)
+        if len(data) <= maxb:
+          break
+        scale *= maxb / len(data) * 0.97
+        ui.update(stage="Too big (%.1f MB), retrying with less quality" % (len(data) / 1048576),
+                  progress=0.0)
+      ui.update(stage="Done!", progress=1.0, info="")
+    except KeyboardInterrupt:
+      ui.fail("cancelled by the user.")
+    except RuntimeError as e:
+      ui.fail(str(e))
+    ui.finish()
+    open(output, "wb").write(data)
+    outputs.append((output, len(data), maxb, struct.unpack_from("<I", data, 12)[0]))
 
-  nframes = struct.unpack_from("<I", data, 12)[0]
-  print("  Saved %s" % args.output)
-  print("  %.2f MB (limit %.2f MB), %d frames, converted in %s." % (
-        len(data) / 1048576, maxb / 1048576, nframes, fmt_time(time.time() - t0)))
-  print("  Copy it to the SD card and open it from SuperFW. Enjoy the show!")
+  for output, size, maxb, nframes in outputs:
+    print("  Saved %s" % output)
+    print("  %.2f MB (limit %.2f MB), %d frames." % (size / 1048576, maxb / 1048576, nframes))
+  print("  Converted in %s. Copy %s to the SD card and open %s from SuperFW. Enjoy the show!" % (
+        fmt_time(time.time() - t0), "it" if len(outputs) == 1 else "them",
+        "it" if len(outputs) == 1 else "each part"))
+  if args.parts == 1 and duration > 12 * 60:
+    print("  Tip: fast scenes look blocky in long videos. Splitting it in two files gives each")
+    print("  part twice the bytes per minute and a much sharper picture: add --parts 2")
   print()
 
 if __name__ == "__main__":

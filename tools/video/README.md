@@ -16,7 +16,11 @@ Turns any video into a `.gbv` file for the SuperFW video player (240x160, up to
 Every frame is kept. What adapts to the 31MB limit is the picture quality, so a
 20-minute episode fits, and shorter videos look better.
 
-Options: `-o out.gbv` (output name), `--max-mb 31.5` (size limit),
+Long videos: 31MB for 20 minutes leaves few bytes per frame, so fast scenes get
+blocky. `--parts 2` (or 3) splits the video into files of the full 31MB each,
+"episode (1 of 2).gbv" and so on, for a much sharper picture.
+
+Options: `--parts N`, `-o out.gbv` (output name), `--max-mb 31.5` (size limit),
 `--spv 264` (better sound, less room for the picture), `--no-audio`,
 `--res 120x80` (half resolution, scaled up: cleaner but blurrier).
 
@@ -41,7 +45,9 @@ Transforma qualquer vídeo num arquivo `.gbv` para o player da SuperFW.
 4. Copie o `.gbv` para qualquer pasta do SD e abra pela SuperFW.
 
 Todos os quadros são mantidos; o que se ajusta ao limite de 31 MB é a qualidade
-da imagem. Opções: `-o saida.gbv`, `--max-mb 31.5`, `--spv 264` (som melhor),
+da imagem. Vídeos longos ficam quadriculados nas cenas rápidas: `--parts 2` (ou
+3) divide o vídeo em arquivos de 31 MB cada ("episodio (1 of 2).gbv"...), com a
+imagem bem mais nítida. Outras opções: `-o saida.gbv`, `--max-mb 31.5`, `--spv 264` (som melhor),
 `--no-audio`, `--res 120x80` (meia resolução ampliada).
 
 Botões no player: A ou Start pausa; ←/→ ±10 s; L/R ±60 s; ↑/↓ volume; Select fixa

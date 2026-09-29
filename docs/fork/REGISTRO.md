@@ -234,6 +234,37 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-29 — Conversor: paleta nos fades, keyframes e --parts (próxima versão)
+
+Medido com `GBV_DEBUG=1` (PSNR de cada quadro contra a fonte, inclusive os
+quadros repetidos), Big Buck Bunny 60 s na densidade de 20 min (1,63 MB):
+
+| Versão | PSNR médio | 10% piores | 1% piores |
+|--------|-----------:|-----------:|----------:|
+| v0.21-fefsouza10.1 | 23,9 dB | 3,4 dB | 1,6 dB |
+| Paleta refeita quando o quadro "foge" dela | 28,7 dB | 26,5 dB | 17,5 dB |
+| + keyframe com no mínimo 4x o orçamento | 29,1 dB | 26,6 dB | 25,2 dB |
+| `--parts 2` (densidade de 10 min) | 30,9 dB | 28,3 dB | 27,2 dB |
+
+- **Paleta presa:** a paleta de 256 cores só era criada no keyframe (a cada 10 s
+  ou em corte de cena). Num fade (do preto, por exemplo) ou mudança de luz, o
+  vídeo ficava segundos com cores erradas ou preto. Agora, a partir de 1/4 s
+  depois do keyframe, se o erro do quadro na paleta atual passar de
+  2,5x (ou +2) o erro de quando ela foi feita, começa um grupo novo.
+- **Keyframe faminto:** o keyframe recebia o mesmo orçamento de um quadro comum
+  (às vezes só 8x8 de cor única em tudo), e o grupo inteiro copiava esse erro.
+  Agora recebe no mínimo 4x o orçamento de um quadro.
+- **`--parts N`:** divide o vídeo em N arquivos ("Nome (1 of 2).gbv"...), cada
+  um com os 31 MB. Um aviso sugere `--parts 2` para vídeos com mais de 12 min.
+- Testado e descartado (ganho < 0,1 dB): busca de movimento por bloco ±12x±8
+  (+40% de tempo), padrões de duas cores 8x8 com degradê (+0,07 dB, usado em
+  1,3% dos blocos, exigiria formato novo), janela de dívida longa no controle de
+  taxa, e descartar quadros alternados em cenas difíceis (perde em PSNR). O
+  limite principal é o número de bytes por minuto, daí o `--parts`.
+- `GBV_STATS=1` mostra quanto cada modo de bloco foi usado; `GBV_DUMP=n,...`
+  (com `GBV_DEBUG=1`) grava o quadro decodificado ao lado da fonte.
+- O formato continua GBV2: os `.gbv` novos tocam na firmware atual.
+
 ### 2026-09-29 — Clique duplo, crédito na aba Info e preparação da release
 
 Teste da 7d79dde no GBA SP: quase tudo perfeito; o menu às vezes contava um toque

@@ -132,7 +132,8 @@ void check_pending_saves() {
 
 volatile unsigned frame_count = 0;
 volatile uint8_t key_presses[10];     // Presses not consumed yet, per key
-static uint16_t irq_prev_keys = 0;
+static uint16_t irq_prev_rel = 0;     // Keys seen released in the previous V-blank
+static uint16_t irq_armed = 0;        // Keys released long enough to count a new press
 
 void irq_handler_fn() {
   // Clear all IRQs just in case
@@ -140,10 +141,15 @@ void irq_handler_fn() {
   // Gets called on every V-blank IRQ.
   frame_count++;
   // Count key presses, so that short (or repeated) presses are not lost
-  // while the menu is busy (ie. loading a cover).
+  // while the menu is busy (ie. loading a cover). A key must read released in
+  // two V-blanks in a row before a new press counts: worn buttons bounce, and a
+  // single released sample while the key is held used to count a second press.
   uint16_t keys = REG_KEYINPUT ^ 0x3FF;
-  uint16_t pressed = keys & ~irq_prev_keys;
-  irq_prev_keys = keys;
+  uint16_t rel = ~keys & 0x3FF;
+  irq_armed |= rel & irq_prev_rel;
+  irq_prev_rel = rel;
+  uint16_t pressed = keys & irq_armed;
+  irq_armed &= ~pressed;
   for (unsigned i = 0; pressed; i++, pressed >>= 1)
     if ((pressed & 1) && key_presses[i] < 4)
       key_presses[i]++;

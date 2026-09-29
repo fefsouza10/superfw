@@ -18,6 +18,55 @@ English
 What's new in this fork
 -----------------------
 
+### Getting started
+1. Download the firmware for your cart from the
+   [Releases](https://github.com/fefsouza10/superfw/releases) page:
+
+   | File | Carts | What is inside |
+   |------|-------|----------------|
+   | `superfw-chis.fw` | SuperChis, SuperChis Prime | Everything: covers, carousel, favorites, search, sleep, soft-patching, NOR games, GB/GBC and other emulators, **video player** |
+   | `superfw-sd.fw` | Supercard SD (and clones) | Everything except the video player, which no longer fits in its 512KB flash (see [Video player](#video-player-gbv)) |
+   | `superfw-lite.fw` | Supercard Lite | Everything except the built-in emulators and the video player (496KB flash) |
+
+2. Try it first without flashing: rename the file to `.gba`, copy it to the SD
+   card and open it from your current SuperFW. When you are happy, open the
+   `.fw` file from the browser to flash it (unlock updates with Down+B+Start in
+   the Info tab). You can go back to an official SuperFW release the same way:
+   the updater only checks that the file is for the right cart.
+3. Optional downloads from the same release:
+   - `COVERS-superfw.zip` (recommended) and/or `IMGS-superfw.zip`: title
+     screens of about 2700 GBA games. Unzip them to the root of the SD card, so
+     you get `/COVERS/...` and/or `/IMGS/...`.
+   - `video-converter.zip`: the PC tool that turns any video into a `.gbv` file.
+
+### Button reference (new or changed)
+
+| Where | Buttons | Action |
+|-------|---------|--------|
+| Browser (list) | Up / Down | Previous / next entry |
+| Browser (list) | Left / Right | Page up / page down |
+| Browser (carousel) | Left / Right | Previous / next game |
+| Browser (carousel) | Up / Down | Page up / page down |
+| Browser (SD, NOR) | R+Down / R+Up | Jump to the next / previous initial letter |
+| Browser | L / R (tap and release) | Previous / next tab |
+| Browser (SD, NOR, Recent) | Start | Add or remove a favorite |
+| Browser (SD) | R+Start | Search by name |
+| Search keyboard | A / L / R / Start / B | Type the letter / previous match / next match / go to the match / close |
+| Favorites / Recent | Select | Remove the entry |
+| ROM info page | Select | Turn the IPS/UPS/BPS patch on or off |
+| In-game menu | "Sleep" entry | Screen off and CPU stopped; the wake combo (default L+R+Select) resumes the game |
+| Asleep (game or menu) | Wake combo (default L+R+Select) | Wake up |
+| Video player | A or Start | Pause |
+| Video player | Left / Right, L / R | Seek 10 s / 60 s back or forward |
+| Video player | Up / Down | Volume |
+| Video player | Select / B | Pin the time bar / pause (B again exits) |
+
+### Settings added by this fork
+- UI tab: "Cover art" (Disabled, Small, Medium, Large) and "Game list view"
+  (List or Carousel).
+- General settings tab: "Wake from sleep" (the combo that wakes the GBA) and
+  "Menu auto sleep" (Never, 2, 5, 10 or 15 idle minutes).
+
 ### Cover art in the browser
 - Shows the cover of the selected game in the SD, NOR, Recent and Favorites tabs.
   Covers are matched by the game code (the 4-letter code in the ROM header).
@@ -42,6 +91,9 @@ What's new in this fork
   from the EZ-Flash pack, from a folder of PNGs, or by downloading the
   libretro-thumbnails images:
   `python3 tools/covers/convert_covers.py --libretro "Nintendo - Game Boy Advance.dat" --out SD/`
+  Add `--ezflash` to write an `IMGS` folder in the EZ-Flash Omega format
+  instead. The ready-made packs in the release were made this way, from the
+  libretro-thumbnails title screens.
 
 ### Faster navigation and favorites
 - R+Down jumps to the next initial letter, and R+Up goes back to the previous one
@@ -88,8 +140,8 @@ What's new in this fork
   30 frames per second. About 20 to 25 minutes fit in one file (the limit is
   31MB, because the video is loaded into the cart SDRAM).
 - The player is built into the `chis` firmware. The `sd` firmware has no room
-  left for it in its 512KB flash: copy `gbvplayer.gba` (built by
-  `make BOARD=chis`) to `/.superfw/emulators/` on the SD card instead.
+  left for it in its 512KB flash: copy `gbvplayer.gba` (attached to
+  every release) to `/.superfw/emulators/` on the SD card instead.
 - Buttons: A or Start pauses; Left/Right seek 10s; L/R, 60s; Up/Down change the
   volume; Select pins the time bar. B pauses, and B again exits to SuperFW.
 - The converter, **Video-to-GBA Converter by fefsouza10**
@@ -118,6 +170,11 @@ What's new in this fork
   loader copies it from. The build now checks this layout.
 - Videos converted on some PCs had no sound (ffmpeg rejected the audio sample
   rate). Fixed in the converter.
+- A single button press was sometimes taken as two in the menu (a key pressed
+  just after a frame was reported by both the press counter and the key
+  repeat, and worn buttons that bounce counted twice). Presses now need the key
+  to be released for two frames, and only counted presses repeat.
+- The Info tab shows "custom version by fefsouza10" under "by davidgf".
 
 The full change log of this fork (in Portuguese) is in
 [`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).
@@ -278,6 +335,56 @@ Português
 Novidades deste fork
 --------------------
 
+### Primeiros passos
+1. Baixe a firmware do seu cartucho na página de
+   [Releases](https://github.com/fefsouza10/superfw/releases):
+
+   | Arquivo | Cartuchos | O que vem nele |
+   |---------|-----------|----------------|
+   | `superfw-chis.fw` | SuperChis, SuperChis Prime | Tudo: capas, carrossel, favoritos, busca, suspender, soft-patching, jogos na NOR, emuladores de GB/GBC e outros, **player de vídeo** |
+   | `superfw-sd.fw` | Supercard SD (e clones) | Tudo, menos o player de vídeo, que não cabe mais nos 512 KB da flash dele (veja [Player de vídeo](#player-de-vídeo-gbv)) |
+   | `superfw-lite.fw` | Supercard Lite | Tudo, menos os emuladores embutidos e o player de vídeo (flash de 496 KB) |
+
+2. Teste antes de gravar: renomeie o arquivo para `.gba`, copie para o SD e abra
+   pela SuperFW que você já tem. Quando estiver tudo certo, abra o `.fw` no
+   navegador para gravar (libere a atualização com ↓+B+Start na aba Info). Dá
+   para voltar a uma versão oficial da SuperFW do mesmo jeito: o atualizador só
+   confere se o arquivo é do cartucho certo.
+3. Downloads opcionais na mesma release:
+   - `COVERS-superfw.zip` (recomendado) e/ou `IMGS-superfw.zip`: telas de
+     título de uns 2700 jogos de GBA. Descompacte na raiz do SD, para ficar
+     `/COVERS/...` e/ou `/IMGS/...`.
+   - `video-converter.zip`: o programa de PC que transforma qualquer vídeo num
+     arquivo `.gbv`.
+
+### Referência de botões (novos ou alterados)
+
+| Onde | Botões | Ação |
+|------|--------|------|
+| Navegador (lista) | ↑ / ↓ | Item anterior / seguinte |
+| Navegador (lista) | ← / → | Página anterior / seguinte |
+| Navegador (carrossel) | ← / → | Jogo anterior / seguinte |
+| Navegador (carrossel) | ↑ / ↓ | Página anterior / seguinte |
+| Navegador (SD, NOR) | R+↓ / R+↑ | Pula para a próxima / anterior letra inicial |
+| Navegador | L / R (toque e solte) | Aba anterior / seguinte |
+| Navegador (SD, NOR, Recentes) | Start | Adiciona ou remove dos favoritos |
+| Navegador (SD) | R+Start | Busca por nome |
+| Teclado da busca | A / L / R / Start / B | Digita a letra / resultado anterior / próximo / vai até ele / fecha |
+| Favoritos / Recentes | Select | Remove o item |
+| Tela de informações da ROM | Select | Liga ou desliga o patch IPS/UPS/BPS |
+| In-game menu | Item "Suspender" | Apaga a tela e para a CPU; a combinação de acordar (padrão L+R+Select) volta ao jogo |
+| Suspenso (jogo ou menu) | Combinação de acordar (padrão L+R+Select) | Acorda |
+| Player de vídeo | A ou Start | Pausa |
+| Player de vídeo | ← / →, L / R | Volta ou avança 10 s / 60 s |
+| Player de vídeo | ↑ / ↓ | Volume |
+| Player de vídeo | Select / B | Fixa a barra de tempo / pausa (B de novo sai) |
+
+### Opções novas deste fork
+- Aba UI: "Capas" (Desativado, Pequena, Média, Grande) e "Exibição" (Lista ou
+  Carrossel).
+- Aba de configurações gerais: "Acordar com" (a combinação que acorda o GBA) e
+  "Suspender no menu" (Nunca, 2, 5, 10 ou 15 minutos parado).
+
 ### Capas dos jogos no navegador
 - Mostra a capa do jogo selecionado nas abas do SD, da NOR, de Recentes e de
   Favoritos. A capa é achada pelo código do jogo (4 letras do cabeçalho da ROM).
@@ -304,6 +411,9 @@ Novidades deste fork
   `COVERS`. Ele converte o pacote do EZ-Flash, uma pasta de PNGs ou baixa as
   imagens do libretro-thumbnails:
   `python3 tools/covers/convert_covers.py --libretro "Nintendo - Game Boy Advance.dat" --out SD/`
+  Com `--ezflash`, ele gera uma pasta `IMGS` no formato do EZ-Flash Omega. Os
+  pacotes prontos da release foram feitos assim, com as telas de título do
+  libretro-thumbnails.
 
 ### Navegação mais rápida e favoritos
 - R+↓ pula para a próxima letra inicial, e R+↑ volta para a anterior (no SD e na
@@ -351,8 +461,8 @@ Novidades deste fork
   30 quadros por segundo. Cabem cerca de 20 a 25 minutos num arquivo (o limite é
   31 MB, porque o vídeo é carregado na SDRAM do cartucho).
 - O player vem embutido na firmware `chis`. Na firmware `sd` ele não cabe mais
-  nos 512 KB da flash: nesse caso, copie o `gbvplayer.gba` (gerado pelo
-  `make BOARD=chis`) para `/.superfw/emulators/` no SD.
+  nos 512 KB da flash: nesse caso, copie o `gbvplayer.gba` (anexado a
+  toda release) para `/.superfw/emulators/` no SD.
 - Botões: A ou Start pausa; ←/→ voltam ou avançam 10 s; L/R, 60 s; ↑/↓ mudam o
   volume; Select fixa a barra de tempo na tela. B pausa, e B de novo sai para a
   SuperFW.
@@ -383,6 +493,12 @@ Novidades deste fork
   loader o copia. A build agora confere esse layout.
 - Vídeos convertidos em alguns PCs ficavam sem som (o ffmpeg recusava a taxa de
   amostragem do áudio). Corrigido no conversor.
+- Um único toque num botão às vezes contava como dois no menu (um botão
+  apertado logo depois de um quadro era contado pelo contador de toques e pela
+  repetição de tecla, e botões gastos que "quicam" contavam duas vezes). Agora o
+  botão precisa ficar solto por dois quadros para contar um toque novo, e só
+  toques já contados repetem.
+- A aba Info mostra "custom version by fefsouza10" embaixo de "by davidgf".
 
 O histórico completo das mudanças deste fork está em
 [`docs/fork/REGISTRO.md`](docs/fork/REGISTRO.md).

@@ -2501,10 +2501,11 @@ void render_info(volatile uint8_t *frame) {
 
   switch (smenu.info.selector) {
   case 0:
-    draw_central_text("by davidgf", frame, 120, 70);
+    draw_central_text("by davidgf", frame, 120, 68);
+    draw_central_text("custom version by fefsouza10", frame, 120, 85);
     npf_snprintf(tmp, sizeof(tmp), "Version %lu.%lu (%08lx)", vmaj, vmin, gitver);
-    draw_central_text(tmp, frame, 120, 95);
-    draw_central_text(FW_FLAVOUR " variant", frame, 120, 114);
+    draw_central_text(tmp, frame, 120, 104);
+    draw_central_text(FW_FLAVOUR " variant", frame, 120, 120);
     break;
   case 1:
     draw_central_text("Flash info", frame, 120, 70);
@@ -4037,7 +4038,10 @@ uint16_t get_keypress() {
       keyrepcnt[i] = 0;
     }
     else if (ckeys & (1 << i)) {
-      if (((1 << i) & keyrep) && systime() > keyreptmr[i]) {
+      // Only keys whose press was already counted repeat. A key pressed after
+      // the last V-blank is reported by the IRQ counter next frame: repeating
+      // it here as well reported that single press twice.
+      if (((1 << i) & keyrep) && keyreptmr[i] && systime() > keyreptmr[i]) {
         if (keyrepcnt[i] > KEY_REPEAT_CNT1)
           keyreptmr[i] = systime() + KEY_REPEAT_FAST;
         else {

@@ -234,6 +234,34 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-09-29 — Clique duplo, crédito na aba Info e preparação da release
+
+Teste da 7d79dde no GBA SP: quase tudo perfeito; o menu às vezes contava um toque
+como dois, e o vídeo ainda fica muito quadriculado em cenas com movimento.
+
+- **Clique duplo:** duas causas em `get_keypress` (`src/menu.c`) e no contador de
+  toques do V-blank (`src/main.c`). (1) Um botão apertado entre o V-blank e a
+  leitura do menu era emitido pela repetição de tecla (o temporizador estava
+  zerado) e, no quadro seguinte, de novo pelo contador de toques. Agora só
+  repetem teclas cujo toque já foi contado. (2) Botões gastos "quicam": uma única
+  leitura de botão solto no meio de um toque contava um toque novo. Agora o botão
+  precisa ser lido solto em dois V-blanks seguidos. Validado no emulador (4
+  toques = 4 itens; segurar continua repetindo).
+- Aba Info: "custom version by fefsouza10" embaixo de "by davidgf".
+- `tools/covers/convert_covers.py --ezflash` gera a pasta `IMGS` no formato do
+  EZ-Flash Omega (120x80, 16 bits). Pacotes em `packs/COVERS-superfw.zip` (2706
+  capas, 8 bits) e `packs/IMGS-superfw.zip` (2706, 16 bits), feitos das telas de
+  título do libretro-thumbnails.
+- README: seção "Primeiros passos" (qual arquivo baixar, como testar e gravar),
+  tabela de botões e opções novas, em inglês e português. `tools/video/README.md`
+  para o conversor.
+- Release: `docs/fork/RELEASE_NOTES.md` (changelog em inglês e português). O
+  workflow `build-release.yml` agora anexa, além dos três `.fw`, o
+  `gbvplayer.gba` (para a placa sd), o `video-converter.zip` e os dois pacotes de
+  capas, com as notas desse arquivo. Precisa das Actions ligadas no fork.
+- Testado no emulador: a firmware `sd` toca vídeo com o `gbvplayer.gba` em
+  `/.superfw/emulators/`.
+
 ### 2026-09-29 — Correção do in-game menu, vídeo GBV2 com som e carrossel de capas
 
 Resultado do teste da 3029df1 no GBA SP: itens 1 a 5 OK; vídeo tocava, mas muito

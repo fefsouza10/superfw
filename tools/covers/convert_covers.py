@@ -20,7 +20,8 @@ Sources (pick one):
                     libretro-database/metadat/no-intro)
 
 Output goes to OUT/COVERS/... (default OUT=.): copy that COVERS folder to the
-root of the SD card.
+root of the SD card. With --ezflash it writes OUT/IMGS/... instead, in the
+EZ-Flash Omega format (120x80, 16bpp), which other flashcarts read as well.
 Requires Pillow (pip install pillow).
 """
 import argparse, os, re, struct, sys, urllib.parse, urllib.request
@@ -96,13 +97,36 @@ def write_bmp8(path, q, pal):
         f.write(hdr + info + quads + rows)
 
 
-def out_path(out, code):
+def write_bmp16_gba(path, im):
+    """Writes a 120x80 16bpp BMP with GBA-native pixels (EZ-Flash Omega)."""
+    im = im.convert("RGB")
+    scale = min(COVER_W / im.width, COVER_H / im.height)
+    size = (max(1, round(im.width * scale)), max(1, round(im.height * scale)))
+    canvas = Image.new("RGB", (COVER_W, COVER_H))
+    canvas.paste(im.resize(size, Image.LANCZOS), ((COVER_W - size[0]) // 2, (COVER_H - size[1]) // 2))
+    px = canvas.load()
+    rows = b"".join(struct.pack("<%dH" % COVER_W, *[
+                        (px[x, y][0] >> 3) | ((px[x, y][1] >> 3) << 5) | ((px[x, y][2] >> 3) << 10)
+                        for x in range(COVER_W)])
+                    for y in reversed(range(COVER_H)))
+    off = 14 + 40
+    hdr = b"BM" + struct.pack("<IHHI", off + len(rows), 0, 0, off)
+    info = struct.pack("<IiiHHIIiiII", 40, COVER_W, COVER_H, 1, 16, 0, len(rows), 2835, 2835, 0, 0)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(hdr + info + rows)
+
+
+def out_path(out, code, folder="COVERS"):
     code = code.upper()
-    return os.path.join(out, "COVERS", code[0], code[1], code + ".bmp")
+    return os.path.join(out, folder, code[0], code[1], code + ".bmp")
 
 
-def convert(src, out, code):
+def convert(src, out, code, ezflash=False):
     try:
+        if ezflash:
+            write_bmp16_gba(out_path(out, code, "IMGS"), load_image(src))
+            return True
         q, pal = to_cover(load_image(src))
         write_bmp8(out_path(out, code), q, pal)
         return True
@@ -170,6 +194,8 @@ def main():
     ap.add_argument("--cache", default="libretro-cache", help="libretro: download folder")
     ap.add_argument("--out", default=".", help="output folder (IMGS is created inside)")
     ap.add_argument("-j", type=int, default=8, help="parallel jobs")
+    ap.add_argument("--ezflash", action="store_true",
+                    help="write an EZ-Flash Omega style IMGS folder (16bpp) instead of COVERS")
     args = ap.parse_args()
 
     if args.libretro:
@@ -193,8 +219,8 @@ def main():
 
     print("Converting %d images..." % len(jobs))
     with ThreadPoolExecutor(args.j) as ex:
-        ok = sum(ex.map(lambda j: convert(j[0], args.out, j[1]), jobs))
-    print("Done: %d covers in %s" % (ok, os.path.join(args.out, "COVERS")))
+        ok = sum(ex.map(lambda j: convert(j[0], args.out, j[1], args.ezflash), jobs))
+    print("Done: %d covers in %s" % (ok, os.path.join(args.out, "IMGS" if args.ezflash else "COVERS")))
 
 
 if __name__ == "__main__":

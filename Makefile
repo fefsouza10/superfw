@@ -155,7 +155,6 @@ INFILES=src/gba_ewram_crt0.S \
         src/recent.c \
         src/coverart.c \
         src/softpatch.c \
-        src/playtime.c \
         src/cheats.c \
         src/flash.c \
         src/sha256.c \

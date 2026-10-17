@@ -38,6 +38,8 @@ What's new in this fork
      screens of about 2700 GBA games. Unzip them to the root of the SD card, so
      you get `/COVERS/...` and/or `/IMGS/...`.
    - `video-converter.zip`: the PC tool that turns any video into a `.gbv` file.
+   - `CHEATS-superfw.zip`: cheat codes for the in-game menu. Unzip into
+     `/.superfw/cheats/`.
 
 ### Button reference (new or changed)
 
@@ -386,6 +388,8 @@ Novidades deste fork
      `/COVERS/...` e/ou `/IMGS/...`.
    - `video-converter.zip`: o programa de PC que transforma qualquer vídeo num
      arquivo `.gbv`.
+   - `CHEATS-superfw.zip`: cheats para o menu in-game. Descompacte em
+     `/.superfw/cheats/`.
 
 ### Referência de botões (novos ou alterados)
 

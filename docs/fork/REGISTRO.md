@@ -236,6 +236,20 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
 
+### 2026-10-17 — Release v0.21-fefsouza10.2 preparada
+
+- Notas em `docs/fork/RELEASE_NOTES.md` (seção "New in (2)" / "Novidades da (2)"),
+  pacote de cheats em `packs/CHEATS-superfw.zip` (gerado de
+  davidgfnet/superfw-cheats com `scripts/pack-cheats.py`) e anexado pelo
+  `build-release.yml`. README cita o pacote.
+- Arquivos da release em `/mnt/project-files/release/v0.21-fefsouza10.2/`. O
+  ambiente do Claude não cria tags nem releases: o Felipe cria a release à mão
+  (ou cria a tag e o workflow publica, se as Actions estiverem ligadas).
+- Patches IPS de velocidade para a FireRed Rev 1 (texto rápido em 0x5804 = E01A,
+  sem batalhas aleatórias em 0x833CC = 2000, dos códigos AR "ROM patch" do
+  libretro-database) em `/mnt/project-files/cheats/patches-velocidade/`. Não
+  conferidos contra a tradução PT-BR.
+
 ### 2026-10-17 — Tempo de jogo removido
 
 - O Felipe pediu para remover toda a contagem de tempo de jogo: ela causava

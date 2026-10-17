@@ -94,7 +94,8 @@ jobs:
             gbvplayer.gba \
             video-converter.zip \
             packs/COVERS-superfw.zip \
-            packs/IMGS-superfw.zip
+            packs/IMGS-superfw.zip \
+            packs/CHEATS-superfw.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -38,6 +38,8 @@ What's new in this fork
      screens of about 2700 GBA games. Unzip them to the root of the SD card, so
      you get `/COVERS/...` and/or `/IMGS/...`.
    - `video-converter.zip`: the PC tool that turns any video into a `.gbv` file.
+   - `CHEATS-superfw.zip`: cheat codes for the in-game menu. Unzip into
+     `/.superfw/cheats/`.
 
 ### Button reference (new or changed)
 
@@ -125,9 +127,36 @@ What's new in this fork
   off before loading. If a UPS or BPS patch was made for a different ROM, the page
   says so and the patch is not applied.
 - Patched ROMs can grow, up to 32MB.
-- Only for games loaded from the SD card (not for NOR flashing). Save type
-  detection and database patches use the original ROM header.
+- Only for games loaded from the SD card (not for NOR flashing).
+- With a patch on, "Automatic" and "Patch Engine" scan the patched ROM: the first
+  time the game loads, the Patch Engine runs on it after patching (the progress
+  bar fills a second time) and the result is kept in
+  `/.superfw/patches/<Game>.ips-<size>.patch`. The internal database is made for
+  the original game and can break hacks that change code (white screen), so only
+  pick it for text-only patches. "Run Patch Engine" on a patched ROM clears that
+  file so the next load scans again.
 - `tools/patch-demo/mkdemo.py` builds a test ROM with one patch of each kind.
+
+### ROM hacks and translations
+- Hacks keep the game code of the original game (Pokémon FireRed hacks still say
+  BPRE), so the internal patch database applies patches made for the original
+  code. If a hack freezes on a white screen, set the patch options to
+  "Patch Engine" (generate the patches when asked), or use the IPS/UPS/BPS patch
+  next to the original ROM as described above.
+- Cheats are looked up in this order: `Game.cht` next to the ROM,
+  `/.superfw/cheats/Game.cht` (named after the ROM) and then the game code file
+  (`/.superfw/cheats/BPRE-01.cht`). A hack can have its own cheats this way. If
+  there is no file for the exact game code, the closest one is used: the same
+  game with another version (`BPRE-00`), then with another region letter
+  (`BPRP-01`, `BPRJ-01`...), so translations that change the region or version
+  still get the original game's cheats. With an IPS/UPS/BPS patch next to the
+  original ROM, the original header is used, so the cheats are found directly. The
+  file has a title line followed by a line of raw (unencrypted) codes,
+  `XXXXXXXX YYYY` pairs separated by spaces or `+`. Unencrypted CodeBreaker codes
+  work as they are; encrypted GameShark/Action Replay codes must be decrypted
+  first. Cheats need the in-game menu. The cheat pack (one `ABCD-EF.cht` per game
+  code and version) is built from https://github.com/davidgfnet/superfw-cheats
+  with `scripts/pack-cheats.py`; unzip it into `/.superfw/cheats/`.
 
 ### Search by name
 - R+Start opens an on-screen keyboard in the SD tab. A types the selected letter,
@@ -155,6 +184,9 @@ What's new in this fork
   Conversion takes about as long as the video itself (about 20 minutes for a
   20-minute episode), with live progress (and an animated Game Boy Advance) in
   the terminal.
+- Long videos squeeze a lot of minutes into 31MB, so fast scenes get blocky.
+  `--parts 2` splits the video in two files ("Name (1 of 2).gbv", ...), each
+  with the full 31MB, for a much sharper picture.
 - The current format (GBV2) reuses the parts of the picture that did not change
   or only moved, so it looks much sharper than the first version at the same
   size. Files made with the old converter still play, but reconvert them to get
@@ -356,6 +388,8 @@ Novidades deste fork
      `/COVERS/...` e/ou `/IMGS/...`.
    - `video-converter.zip`: o programa de PC que transforma qualquer vídeo num
      arquivo `.gbv`.
+   - `CHEATS-superfw.zip`: cheats para o menu in-game. Descompacte em
+     `/.superfw/cheats/`.
 
 ### Referência de botões (novos ou alterados)
 
@@ -447,9 +481,38 @@ Novidades deste fork
   e desliga o patch antes de carregar. Se o patch UPS ou BPS foi feito para outra
   versão da ROM, a tela avisa e ele não é aplicado.
 - A ROM pode crescer com o patch, até 32 MB.
-- Só vale para jogos carregados do SD (não para a gravação na NOR). A detecção de
-  save e os patches da base de dados usam o cabeçalho da ROM original.
+- Só vale para jogos carregados do SD (não para a gravação na NOR).
+- Com o patch ligado, "Automático" e "Patch Engine" analisam a ROM já patchada: na
+  primeira vez que o jogo carrega, o Patch Engine roda nela depois do patch (a
+  barra de progresso enche uma segunda vez) e o resultado fica guardado em
+  `/.superfw/patches/<Jogo>.ips-<tamanho>.patch`. A BD interna é feita para o jogo
+  original e pode quebrar hacks que mudam o código (tela branca); use-a só com
+  patches que mudam apenas texto. "Executa PatchEngine" numa ROM com patch apaga
+  esse arquivo, e o próximo carregamento analisa de novo.
 - `tools/patch-demo/mkdemo.py` cria uma ROM de teste com um patch de cada tipo.
+
+### ROM hacks e traduções
+- Hacks mantêm o código do jogo original (hacks de Pokémon FireRed continuam
+  BPRE), então a BD interna de patches aplica patches feitos para o código
+  original. Se um hack travar numa tela branca, troque as opções de patch para
+  "Patch Engine" (e gere os patches quando perguntar), ou use o patch
+  IPS/UPS/BPS ao lado da ROM original, como explicado acima.
+- Os cheats são procurados nesta ordem: `Jogo.cht` ao lado da ROM,
+  `/.superfw/cheats/Jogo.cht` (com o nome da ROM) e depois o arquivo pelo código
+  do jogo (`/.superfw/cheats/BPRE-01.cht`). Assim um hack pode ter cheats próprios.
+  Se não houver arquivo para o código exato, vale o mais próximo: o mesmo jogo em
+  outra versão (`BPRE-00`) e depois com outra letra de região (`BPRP-01`,
+  `BPRJ-01`...). Assim traduções que mudam a região ou a versão usam os cheats do
+  jogo original. Com o patch IPS/UPS/BPS ao lado da ROM original, vale o
+  cabeçalho original, e os cheats são achados direto.
+  O arquivo tem uma linha de título seguida de uma linha de códigos crus (sem
+  criptografia), em pares `XXXXXXXX YYYY` separados por espaço ou `+`. Códigos
+  CodeBreaker sem criptografia funcionam como estão; códigos GameShark/Action
+  Replay criptografados precisam ser decodificados antes. Cheats precisam do menu
+  in-game.
+  O pacote de cheats (um `ABCD-EF.cht` por código e versão) vem de
+  https://github.com/davidgfnet/superfw-cheats, gerado com
+  `scripts/pack-cheats.py`; descompacte em `/.superfw/cheats/`.
 
 ### Busca por nome
 - R+Start abre um teclado na tela, na aba do SD. A digita a letra escolhida, e a
@@ -477,6 +540,9 @@ Novidades deste fork
   A conversão leva mais ou menos o tempo do próprio vídeo (uns 20 minutos para
   um episódio de 20 minutos), com o progresso (e um Game Boy Advance animado) no
   terminal. As mensagens do conversor são em inglês.
+- Vídeos longos espremem muitos minutos em 31 MB, então as cenas rápidas ficam
+  quadriculadas. `--parts 2` divide o vídeo em dois arquivos ("Nome (1 of
+  2).gbv", ...), cada um com os 31 MB inteiros, e a imagem fica bem mais nítida.
 - O formato atual (GBV2) reaproveita as partes da imagem que não mudaram ou só se
   moveram, então fica bem mais nítido que a primeira versão no mesmo tamanho.
   Arquivos feitos com o conversor antigo continuam tocando, mas vale convertê-los

@@ -228,6 +228,7 @@ unsigned load_gba_rom(
   const t_rtc_info *rtcinfo,
   unsigned cheats,
   const t_softpatch *spatch,
+  const char *spatch_pekey,
   progress_fn progress
 ) {
 
@@ -358,6 +359,28 @@ unsigned load_gba_rom(
   if (spatch && softpatch_apply(spatch, fn, fs, tsize)) {
     set_supercard_mode(MAPPED_SDRAM, true, true);
     return ERR_LOAD_PATCH;
+  }
+
+  // Patches made for the original ROM (database or Patch Engine) can hit code
+  // the patch changed. Run the Patch Engine on the patched image instead, and
+  // cache the result so that next time the menu knows what the game supports.
+  t_patch_builder pb;
+  if (spatch && spatch_pekey) {
+    void pe_progress(unsigned i) {
+      progress(i >> 10, esize >> 12);
+    }
+    patchengine_init(&pb, esize);
+    patchengine_process_rom((uint32_t*)GBA_ROM_ADDR, esize & ~3U, &pb, pe_progress);
+    patchengine_finalize(&pb);
+
+    set_supercard_mode(MAPPED_SDRAM, true, true);
+    write_patches_cache(spatch_pekey, &pb.p);
+    set_supercard_mode(MAPPED_SDRAM, true, false);
+
+    ptch = &pb.p;
+    // Without IRQ hooks the menu cannot be entered, skip the boot detour too.
+    if (!pb.p.irqh_ops)
+      ingame_menu = false;
   }
 
   // Load/Patch the DirectSave payload if necessary.

@@ -21,6 +21,8 @@
 #include "fatfs/ff.h"
 #include "util.h"
 #include "compiler.h"
+#include "nanoprintf.h"
+#include "config.h"
 
 #define ROM8(off)      (((volatile uint8_t*)0x08000000)[off])
 #define RDBUF_SZ       1024
@@ -256,12 +258,23 @@ bool softpatch_find(const char *romfn, uint32_t romfs, t_softpatch *sp) {
 
     uint32_t hl = 0;
     sp->type = SPatchIPS + t;
+    sp->psize = f_size(&fd);
     sp->tsize = parse_header(&fd, sp->type, romfs, &hl);
     sp->valid = sp->tsize && sp->tsize <= MAX_GBA_ROM_SIZE;
     f_close(&fd);
     return true;
   }
   return false;
+}
+
+void softpatch_cache_key(const t_softpatch *sp, char *key) {
+  // The cache uses the basename with its extension replaced by ".patch",
+  // so this yields "<rom>.ips-<size>.patch" and never the ROM's own entry.
+  // Long names are cut short so it fits in the cache directory path.
+  char sz[16];
+  npf_snprintf(sz, sizeof(sz), "-%08x.x", (unsigned)sp->psize);
+  npf_snprintf(key, MAX_FN_LEN - 64, "%s", file_basename(sp->fn));
+  strcat(key, sz);
 }
 
 static bool apply_ips(t_preader *r, uint32_t tsize) {

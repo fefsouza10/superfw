@@ -60,7 +60,9 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 | I | Economia de bateria no menu (CPU parada no V-blank) | Pronto p/ teste no hardware | 9 |
 | J | EWRAM rápida por jogo + teste mais forte | Planejado (o overclock global dá bugs no SP do Felipe) | 10 |
 | K | Carrossel de capas (estilo DSPico) | Pronto p/ teste no hardware (validado no emulador) | 11 |
-| L | Tempo de jogo, papel de parede (por último) | Planejado | 12 |
+| L | Tempo de jogo | Removido em 17/10 (causava bugs nos jogos, pedido do Felipe) | 12 |
+| M | Papel de parede (por último) | Planejado | 13 |
+| N | Hacks e traduções: Patch Engine na ROM com patch, cheats por nome da ROM | Pronto p/ teste no hardware (validado no emulador) | 14 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -233,6 +235,149 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-10-17 — Release v0.21-fefsouza10.2 preparada
+
+- Notas em `docs/fork/RELEASE_NOTES.md` (seção "New in (2)" / "Novidades da (2)"),
+  pacote de cheats em `packs/CHEATS-superfw.zip` (gerado de
+  davidgfnet/superfw-cheats com `scripts/pack-cheats.py`) e anexado pelo
+  `build-release.yml`. README cita o pacote.
+- Arquivos da release em `/mnt/project-files/release/v0.21-fefsouza10.2/`. O
+  ambiente do Claude não cria tags nem releases: o Felipe cria a release à mão
+  (ou cria a tag e o workflow publica, se as Actions estiverem ligadas).
+- Patches IPS de velocidade para a FireRed Rev 1 (texto rápido em 0x5804 = E01A,
+  sem batalhas aleatórias em 0x833CC = 2000, dos códigos AR "ROM patch" do
+  libretro-database) em `/mnt/project-files/cheats/patches-velocidade/`. Não
+  conferidos contra a tradução PT-BR.
+
+### 2026-10-17 — Tempo de jogo removido
+
+- O Felipe pediu para remover toda a contagem de tempo de jogo: ela causava
+  muitos bugs nos jogos. Revertido o commit d77a532 inteiro (contador no FIQ r8
+  do gancho de V-blank do IGM e do trampolim da NOR, espelho na SRAM em 0xFFD0,
+  `/.superfw/playtime*.txt`, linha na tela de informações e no IGM,
+  `src/playtime.c/.h`, mensagens e README). Ficou só o `EMU_HARNESS` no IGM
+  (`INGAMEFLAGS` no Makefile), que é ferramenta de teste.
+- Os arquivos `/.superfw/playtime.txt`, `playtime-igm.txt` e
+  `playtime-session.txt` que já estão no SD não são mais usados e podem ser
+  apagados. Atenção: se a sessão anterior parou com um jogo SRAM aberto, os 4
+  bytes em 0xFFD0 da SRAM ficaram com o contador (antes eram devolvidos no boot).
+- Tamanhos: sd 521996, lite 489600 bytes.
+
+### 2026-10-17 — Hacks/traduções, novidades do upstream e cheats por nome da ROM
+
+Origem: a FireRed Rev 1 com a tradução PT-BR (romhacking.net.br, tópico 3337)
+travava numa tela branca no GBA SP e rodava no emulador, tanto com o `.ips` ao
+lado da ROM quanto com a ROM já traduzida.
+- Causa: a BD interna é procurada pelo código do cabeçalho (BPRE v1, igual ao do
+  jogo original) e aplica ops em endereços fixos da ROM original (save Flash 128K
+  para SRAM, WAITCNT, gancho de IRQ do IGM). A tradução muda código do jogo, e
+  algum desses endereços cai em cima dele. Contorno validado pelo Felipe: ROM já
+  traduzida + "Patch Engine" (gerar patches) + save SRAM.
+- O save não ficava gravado com os patches do Patch Engine (SRAM e Save Direto).
+  Causa provável: bug do upstream na tabela de Flash v1 (usava os ponteiros da
+  estrutura v2), corrigido em davidgfnet/superfw f170dfb e trazido no merge
+  abaixo. Os `.patch` gerados por builds antigas precisam ser gerados de novo.
+- Merge de `davidgfnet/superfw` master (22 commits, 30/09 a 16/10, sem
+  conflitos): correção do Patch Engine em Flash v1; #49 (byte 3 do setor base e
+  do tamanho no Save Direto, deslocado 23 em vez de 24: corrompe saves em
+  cartões grandes); gravação de save mais segura (arquivo temporário e mais
+  checagens de erro); correções de RTC (ano, dia, dia da semana); resolução da
+  política de patch; lista de recentes protegida; mais informações do cartão SD;
+  ASM movido para C; traduções. Nada do upstream ficou de fora.
+- Bug próprio encontrado no Patch Engine (também no upstream): a geração lê a ROM
+  em blocos de 8 MB e os endereços eram relativos ao bloco, então achados depois
+  dos 8 MB viravam patches em endereços errados. Novo campo `baseoff` no
+  `t_patch_builder` (também em `tests/cli_patchengine.c`).
+- Patch Engine na ROM com patch: com o soft-patch ligado, "Automático" e
+  "Patch Engine" passam a usar resultados próprios da ROM patchada, guardados em
+  `/.superfw/patches/<rom>.<ext>-<tamanho do patch>.patch`
+  (`softpatch_cache_key`). Se ainda não existem, o `load_gba_rom` roda o Patch
+  Engine na imagem já patchada na SDRAM (logo depois do `softpatch_apply`), grava
+  o cache e aplica esses patches. Sem ops de IRQ no resultado, o IGM é
+  desligado nesse carregamento. Até lá, a BD serve só de palpite para o menu
+  (IGM, tipo de save). O SELECT da tela de informações recarrega os patches
+  certos. "Executa PatchEngine" com o patch ligado apaga o cache, e a pergunta
+  "gerar patches?" não aparece (o carregamento gera). "BD interna" escolhida à mão
+  continua usando a BD.
+- Cheats: o `.cht` ao lado da ROM era achado mas nunca carregado (bug do
+  upstream: a leitura ficava dentro do `if` do caminho pelo código do jogo). Agora
+  a ordem é `<rom>.cht` ao lado da ROM, `/.superfw/cheats/<rom>.cht` e
+  `/.superfw/cheats/<código>-<versão>.cht`, sempre carregando o que achar. Sem
+  arquivo para o código exato, tenta o mesmo jogo em outras versões (00 a 02) e
+  depois com outras letras de região (E, P, J, D, F, I, S, X), para traduções que
+  mudam a região ou a versão do cabeçalho (pedido do Felipe: usar os cheats da
+  FireRed original na versão PT-BR).
+- Testado no harness com ROM sintética + IPS que move uma constante de WAITCNT:
+  a constante nova é zerada, o cache é criado e o segundo carregamento (usando o
+  cache) dá a mesma imagem. O bug dos 8 MB foi conferido com o
+  `cli_patchengine` (IRQ em 0x500100 sai em 0x500100).
+- Tamanhos: sd 523988 de 524288 bytes (sobram 300), lite e chis ok.
+- Arquivos: `src/softpatch.c/.h`, `src/loader.c`, `src/common.h`, `src/menu.c`,
+  `src/patchengine.c/.h`, `tests/cli_patchengine.c`, README (EN/PT).
+
+### 2026-09-29 — Tempo de jogo (próxima versão)
+
+Contagem por quadros, sem RTC:
+- O gancho de V-blank do in-game menu (`src/ingame.S`, e os dois handlers do
+  trampolim da NOR em `src/ingame_trampoline.S`) conta cada quadro no r8 do modo
+  FIQ. O GBA não tem fonte de FIQ, e nada no jogo nem na FW usa r8-r12 desse modo;
+  os savestates só guardam sp/lr/spsr, então carregar um state não mexe no
+  contador. Suspender e o próprio IGM não geram V-blank, então não contam.
+- Se o r9 do FIQ não é zero, o contador também é espelhado (4 bytes) na SRAM,
+  banco 0, offset 0xFFD0 (logo abaixo da config do DirectSave). Só para jogos sem
+  save, SRAM ou EEPROM, que não usam o fim do banco 0. O loader guarda os 4 bytes
+  originais em `/.superfw/playtime-session.txt` e o boot devolve esses bytes antes
+  do `check_pending_saves`, então o `.sav` não muda.
+- Jogos com save Flash: o IGM grava o contador em `/.superfw/playtime-igm.txt`
+  depois de desenhar o primeiro quadro do menu.
+- No boot, `playtime_flush()` soma max(SRAM, arquivo do IGM) em
+  `/.superfw/playtime.txt` ("quadros chave"; chave = caminho da ROM ou
+  `nor:<nome>`), reescrito por um arquivo temporário. O t_igmenu ganhou
+  `playtime_base` (total anterior) para o IGM mostrar o total.
+- Tela de informações da ROM: linha "Tempo de jogo: 12h 05m" (o texto sobe 8 px
+  quando ela aparece). IGM: "12h 05m jogados" à direita de "Voltar ao jogo".
+- `EMU_HARNESS=1` agora vale também para o IGM (o SD simulado funciona lá).
+- Testado no harness: jogo sem save (espelho na SRAM, somado ao voltar ao menu),
+  jogo SRAM com `.sav` marcado em 0xFFD0 (arquivo idêntico depois da sessão) e
+  jogo Flash 128K (arquivo do IGM, somado depois de "desligar" = nova execução).
+  O trampolim da NOR não roda no harness: falta testar no GBA SP.
+- Tamanhos: sd 523264 de 524288 bytes (sobra 1 KB), lite 491008, chis ok.
+- Arquivos: `src/playtime.c/.h` (novo), `src/ingame.S`, `src/ingame_trampoline.S`,
+  `src/ingame_menu.c`, `src/ingame.h`, `src/asmutil.S`, `src/loader.c`,
+  `src/main.c`, `src/menu.c`, `src/config.h`, `res/messages.py`, `res/lang/pt.json`,
+  `res/lang/es.json`, `Makefile`, README (EN/PT).
+
+### 2026-09-29 — Conversor: paleta nos fades, keyframes e --parts (próxima versão)
+
+Medido com `GBV_DEBUG=1` (PSNR de cada quadro contra a fonte, inclusive os
+quadros repetidos), Big Buck Bunny 60 s na densidade de 20 min (1,63 MB):
+
+| Versão | PSNR médio | 10% piores | 1% piores |
+|--------|-----------:|-----------:|----------:|
+| v0.21-fefsouza10.1 | 23,9 dB | 3,4 dB | 1,6 dB |
+| Paleta refeita quando o quadro "foge" dela | 28,7 dB | 26,5 dB | 17,5 dB |
+| + keyframe com no mínimo 4x o orçamento | 29,1 dB | 26,6 dB | 25,2 dB |
+| `--parts 2` (densidade de 10 min) | 30,9 dB | 28,3 dB | 27,2 dB |
+
+- **Paleta presa:** a paleta de 256 cores só era criada no keyframe (a cada 10 s
+  ou em corte de cena). Num fade (do preto, por exemplo) ou mudança de luz, o
+  vídeo ficava segundos com cores erradas ou preto. Agora, a partir de 1/4 s
+  depois do keyframe, se o erro do quadro na paleta atual passar de
+  2,5x (ou +2) o erro de quando ela foi feita, começa um grupo novo.
+- **Keyframe faminto:** o keyframe recebia o mesmo orçamento de um quadro comum
+  (às vezes só 8x8 de cor única em tudo), e o grupo inteiro copiava esse erro.
+  Agora recebe no mínimo 4x o orçamento de um quadro.
+- **`--parts N`:** divide o vídeo em N arquivos ("Nome (1 of 2).gbv"...), cada
+  um com os 31 MB. Um aviso sugere `--parts 2` para vídeos com mais de 12 min.
+- Testado e descartado (ganho < 0,1 dB): busca de movimento por bloco ±12x±8
+  (+40% de tempo), padrões de duas cores 8x8 com degradê (+0,07 dB, usado em
+  1,3% dos blocos, exigiria formato novo), janela de dívida longa no controle de
+  taxa, e descartar quadros alternados em cenas difíceis (perde em PSNR). O
+  limite principal é o número de bytes por minuto, daí o `--parts`.
+- `GBV_STATS=1` mostra quanto cada modo de bloco foi usado; `GBV_DUMP=n,...`
+  (com `GBV_DEBUG=1`) grava o quadro decodificado ao lado da fonte.
+- O formato continua GBV2: os `.gbv` novos tocam na firmware atual.
 
 ### 2026-09-29 — Clique duplo, crédito na aba Info e preparação da release
 

@@ -1,4 +1,4 @@
-# SuperFW v0.21, custom version by fefsouza10 (1)
+# SuperFW v0.21, custom version by fefsouza10 (2)
 
 A fork of [SuperFW](https://github.com/davidgfnet/superfw) v0.21 by davidgf, made for the
 SuperChis Prime on a Game Boy Advance SP. *Versão em português abaixo.*
@@ -14,13 +14,43 @@ SuperChis Prime on a Game Boy Advance SP. *Versão em português abaixo.*
 | `IMGS-superfw.zip` | all | The same title screens in the EZ-Flash Omega format (16-bit BMP, 120x80). Optional: covers games missing from `/COVERS` |
 | `video-converter.zip` | PC | Video-to-GBA Converter by fefsouza10 (Python), turns any video into a `.gbv` file |
 | `gbvplayer.gba` | sd | The video player, for the `sd` firmware only |
+| `CHEATS-superfw.zip` | all | Cheat codes for 335 game codes/versions, from davidgfnet/superfw-cheats. Unzip into `/.superfw/cheats/` |
 
 Try the firmware first by renaming it to `.gba` and opening it from your current
 SuperFW. To flash it, open the `.fw` from the browser (unlock updates with
 Down+B+Start in the Info tab). You can go back to an official SuperFW release the
 same way.
 
-## What's new
+## New in (2)
+
+### ROM hacks and translations
+- Hacks and translations keep the original game code (FireRed PT-BR is still
+  BPRE), so the internal patch database could hit code the hack changed and the
+  game froze on a white screen. Fix: pick "Patch Engine" in the patch options.
+- With an IPS/UPS/BPS patch next to the ROM, "Automatic" and "Patch Engine" now
+  scan the **patched** ROM the first time it loads (the progress bar fills twice)
+  and keep the result in `/.superfw/patches/`.
+- Cheats: `Game.cht` next to the ROM now loads (it was found but never read),
+  `/.superfw/cheats/Game.cht` (named after the ROM) works too, and when there is
+  no file for the exact game code, another version or region of the same game is
+  used.
+
+### From the original SuperFW (22 commits up to 2026-10-16)
+- Patch Engine fix for Flash-save games (saves were not kept in games like
+  Pokémon FireRed with generated patches; generate them again).
+- DirectSave fix that could corrupt saves on big SD cards (#49).
+- Safer save writing (temporary file, more error checks), RTC fixes (year, day,
+  day of week), patch policy and recent list fixes, more SD card info.
+
+### Other
+- Patch Engine: patches found past the first 8MB of a ROM went to the wrong
+  address.
+- Play time tracking removed (it caused bugs in games). The
+  `/.superfw/playtime*.txt` files can be deleted.
+- Video converter: better palettes in fades, keyframe budget, `--parts` to split
+  long videos.
+
+## Everything this fork adds
 
 ### Cover art
 - The selected game's cover shows in the SD, NOR, Recent and Favorites tabs (based
@@ -83,7 +113,7 @@ same way.
 
 ---
 
-# SuperFW v0.21, versão personalizada por fefsouza10 (1)
+# SuperFW v0.21, versão personalizada por fefsouza10 (2)
 
 Um fork do [SuperFW](https://github.com/davidgfnet/superfw) v0.21, do davidgf, feito para
 o SuperChis Prime num Game Boy Advance SP.
@@ -99,13 +129,44 @@ o SuperChis Prime num Game Boy Advance SP.
 | `IMGS-superfw.zip` | todos | As mesmas telas no formato do EZ-Flash Omega (BMP de 16 bits, 120x80). Opcional: cobre jogos que faltarem no `/COVERS` |
 | `video-converter.zip` | PC | Video-to-GBA Converter by fefsouza10 (Python), transforma qualquer vídeo num `.gbv` |
 | `gbvplayer.gba` | sd | O player de vídeo, só para a firmware `sd` |
+| `CHEATS-superfw.zip` | todos | Cheats para 335 códigos/versões de jogos, do davidgfnet/superfw-cheats. Descompacte em `/.superfw/cheats/` |
 
 Teste a firmware primeiro renomeando para `.gba` e abrindo pela SuperFW que você
 já tem. Para gravar, abra o `.fw` no navegador (libere a atualização com
 ↓+B+Start na aba Info). Dá para voltar a uma versão oficial da SuperFW do mesmo
 jeito.
 
-## Novidades
+## Novidades da (2)
+
+### ROM hacks e traduções
+- Hacks e traduções mantêm o código do jogo original (a FireRed PT-BR continua
+  BPRE), então a BD interna de patches podia cair em cima do código alterado e o
+  jogo travava numa tela branca. Solução: escolha "Patch Engine" nas opções de
+  patch.
+- Com um patch IPS/UPS/BPS ao lado da ROM, "Automático" e "Patch Engine" agora
+  analisam a ROM **já patchada** na primeira vez que ela carrega (a barra enche
+  duas vezes) e guardam o resultado em `/.superfw/patches/`.
+- Cheats: o `Jogo.cht` ao lado da ROM agora carrega (era achado mas nunca lido),
+  `/.superfw/cheats/Jogo.cht` (com o nome da ROM) também vale, e quando não há
+  arquivo para o código exato, vale outra versão ou região do mesmo jogo.
+
+### Do SuperFW original (22 commits até 16/10/2026)
+- Correção do Patch Engine em jogos com save Flash (o save não ficava gravado em
+  jogos como Pokémon FireRed com patches gerados; gere de novo).
+- Correção do Save Direto que podia corromper saves em cartões SD grandes (#49).
+- Gravação de save mais segura (arquivo temporário, mais checagens), correções
+  de RTC (ano, dia, dia da semana), da política de patch e da lista de recentes,
+  mais informações do cartão SD.
+
+### Outros
+- Patch Engine: patches achados depois dos primeiros 8 MB da ROM iam para o
+  endereço errado.
+- Tempo de jogo removido (causava bugs nos jogos). Os arquivos
+  `/.superfw/playtime*.txt` podem ser apagados.
+- Conversor de vídeo: paletas melhores nos fades, orçamento de keyframes e
+  `--parts` para dividir vídeos longos.
+
+## Tudo o que o fork adiciona
 
 ### Capas
 - A capa do jogo selecionado aparece nas abas do SD, da NOR, de Recentes e de

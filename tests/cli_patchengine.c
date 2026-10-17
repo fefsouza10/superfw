@@ -44,11 +44,12 @@ int main(int argc, char **argv) {
   patchengine_init(&pb, st.st_size);
   char *tmp = malloc(BLK_SIZE + 64);   // FIXME: the scanner overruns the buffer sometimes.
 
-  while (true) {
+  for (unsigned off = 0; ; off += BLK_SIZE) {
     int r = fread(tmp, 1, BLK_SIZE, fd);
     if (r <= 0)
       break;
 
+    pb.baseoff = off;
     patchengine_process_rom((uint32_t*)tmp, r, &pb, dummy);
   }
 

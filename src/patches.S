@@ -680,33 +680,57 @@ START_FUNC(patch_rtc_gettimedate)
   bl div_ts_bcd
   strb r0, [r4, #4]
 
+  add r0, r5, $6               // Jan 1st 2000 is saturday (#6)
+  mov r1, $7
+  swi 0x6                      // r1 = (days + 6) % 7
+  strb r1, [r4, #3]            // Store day of week
+
   // r5 contains the number of days since 2000-01-01
   // it's a bit trickier to get year/month/day now.
 
-  mov r0, $0         // Start on year 2000 (0)
+  // Encoding days as 2 bits each (28+d), fits in 32 bits.
+  .equ DAYS_LUT, (3 <<  0) | /* Jan 31 */ \
+                 (0 <<  2) | /* Feb 28 */ \
+                 (3 <<  4) | /* Mar 31 */ \
+                 (2 <<  6) | /* Apr 30 */ \
+                 (3 <<  8) | /* May 31 */ \
+                 (2 << 10) | /* Jun 30 */ \
+                 (3 << 12) | /* Jul 31 */ \
+                 (3 << 14) | /* Aug 31 */ \
+                 (2 << 16) | /* Sep 30 */ \
+                 (3 << 18) | /* Oct 31 */ \
+                 (2 << 20) | /* Nov 30 */ \
+                 (3 << 22)   /* Dec 31 */
+
+  mov r0, $0         // Start on year 2000.
   1:
+    ldr r2, =DAYS_LUT
     mov r1, $180     // Assume non-leap year
     add r1, $185
-    adr r2, months
     lsl r3, r0, $30
     bne 2f
-      add r1, $1     // Leap year!
-      add r2, $12    // Jump 12 months in the table
+      add r1, $1            // Leap year!
+      add r2, $(1 << 2)     // Make february 29 days
     2:
+    add r0, $1       // Increment year (in advance)
     sub r5, r1       // Decrement 365 or 366
     bcs 1b           // Keep looping if the result was 0+
 
   add r5, r1  // r5 underflowed, re-add r1 to go back one iteration
+  sub r0, $1  // Correct year since we always preincrement
 
-  // r0 is the year, r5 contains the day offset (in the year), r2 points to the month table.
+  // r0 is the year, r5 contains the day offset (in the year), r2 contains the 24 bit LUT word.
 
   bl bcdconv         // Calculate year and store it
   strb r0, [r4, #0]
 
   mov r0, $0         // Start on month 0
   1:
-    ldrb r1, [r2, r0]
-    add r0, $1
+    mov r1, $3
+    and r1, r2
+    add r1,$28       // Calculates the number of days in the month
+    lsr r2, $2       // Advance LUT to next month
+    add r0, $1       // Advance to next month (1-12)
     sub r5, r1       // Subtract the day count for that month
     bcs 1b           // Keep iterating if the result was 0+
 
@@ -717,7 +741,7 @@ START_FUNC(patch_rtc_gettimedate)
   bl bcdconv                   // Get month
   strb r0, [r4, #1]
 
-  mov r0, r5
+  add r0, r5, $1
   bl bcdconv                   // Get day
   strb r0, [r4, #2]
 
@@ -742,11 +766,6 @@ bcdconv:
   lsl r0, $4
   orr r0, r1
   bx lr
-
-.balign 4
-months:
-  .byte 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-  .byte 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
 
 END_FUNC(patch_rtc_gettimedate)
 

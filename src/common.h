@@ -266,7 +266,8 @@ unsigned load_gba_rom(const char *fn, uint32_t fs, const char *savefn,
                       const struct struct_t_patch *ptch,
                       const t_dirsave_info *dsinfo, bool ingame_menu,
                       const t_rtc_info *rtcinfo, unsigned cheats,
-                      const struct struct_t_softpatch *spatch, progress_fn progress);
+                      const struct struct_t_softpatch *spatch, const char *spatch_pekey,
+                      progress_fn progress);
 // Launch from NOR
 unsigned  flash_gba_nor(const char *fn, uint32_t fs, const t_rom_header *rom_header,
                         const struct struct_t_patch *ptch, bool dirsaving, bool ingame_menu, bool rtc_patches,

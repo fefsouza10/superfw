@@ -781,17 +781,15 @@ static bool prepare_gba_info(
     else
       info->patch_type = PatchNone;
   }
-  // Downgrade to no patches if the specified was not found.
-  else if (st->patch_policy == PatchDatabase) {
-    if (!info->patches_datab_found)
-      info->patch_type = PatchNone;
-  }
-  else if (st->patch_policy == PatchEngine) {
-    if (!info->patches_cache_found)
-      info->patch_type = PatchNone;
-  }
-  else
+  else {
+    // Use the specified patch type.
     info->patch_type = st->patch_policy;
+
+    // Downgrade to no patches if the specified was not found.
+    if ((info->patch_type == PatchDatabase && !info->patches_datab_found) ||
+        (info->patch_type == PatchEngine   && !info->patches_cache_found))
+      info->patch_type = PatchNone;
+  }
 
   // Fill defaults as requested if possible.
   bool allowds = load_sdram ? dirsav_avail_sdram(info) : dirsav_avail_flash(info);
@@ -1113,7 +1111,7 @@ void start_emu_game(const t_emu_loader *ldinfo, const char *fn, uint32_t fs) {
       if (recent_menu)
         insert_recent_flush(fn, FLAG_RECENT_SD);
 
-      unsigned errcode = load_extemu_rom(fn, fs, ldinfo, loadrom_progress);
+      errcode = load_extemu_rom(fn, fs, ldinfo, loadrom_progress);
       if (errcode && errcode != ERR_LOAD_NOEMU)
         break;
       ldinfo++;
@@ -2555,14 +2553,15 @@ void render_info(volatile uint8_t *frame) {
     draw_central_text(tmp, frame, 120, 110);
     break;
   case 3:
-    if (sd_info.sdhc)
-      draw_central_text("SD card type: SDHC", frame, 120, 70);
-    else
-      draw_central_text("SD card type: SDSC", frame, 120, 70);
+    npf_snprintf(tmp, sizeof(tmp), "SD Card ID: %02x | %04x", sd_info.manufacturer, sd_info.oemid);
+    draw_central_text(tmp, frame, 120, 70);
     human_size_kb(tmp2, sizeof(tmp2), sd_info.block_cnt / 2);
-    npf_snprintf(tmp, sizeof(tmp), msgs[lang_id][MSG_CAPACITY], tmp2);
+    npf_snprintf(tmp, sizeof(tmp), "Type: %s  Size: %s", sd_info.sdhc ? "SDHC" : "SDSC", tmp2);
     draw_central_text(tmp, frame, 120, 90);
-    npf_snprintf(tmp, sizeof(tmp), "Card ID: %02x | %04x", sd_info.manufacturer, sd_info.oemid);
+    npf_snprintf(tmp, sizeof(tmp), "Info: %c%c%c%c%c (%d/%d)",
+      sd_info.prodname[0] ?: '#', sd_info.prodname[1] ?: '#',
+      sd_info.prodname[2] ?: '#', sd_info.prodname[3] ?: '#',
+      sd_info.prodname[4] ?: '#', 2000 + sd_info.year, sd_info.month);
     draw_central_text(tmp, frame, 120, 110);
     break;
   }

@@ -60,7 +60,7 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 | I | Economia de bateria no menu (CPU parada no V-blank) | Pronto p/ teste no hardware | 9 |
 | J | EWRAM rápida por jogo + teste mais forte | Planejado (o overclock global dá bugs no SP do Felipe) | 10 |
 | K | Carrossel de capas (estilo DSPico) | Pronto p/ teste no hardware (validado no emulador) | 11 |
-| L | Tempo de jogo | Pronto p/ teste no hardware (validado no emulador); próxima versão | 12 |
+| L | Tempo de jogo | Removido em 17/10 (causava bugs nos jogos, pedido do Felipe) | 12 |
 | M | Papel de parede (por último) | Planejado | 13 |
 | N | Hacks e traduções: Patch Engine na ROM com patch, cheats por nome da ROM | Pronto p/ teste no hardware (validado no emulador) | 14 |
 
@@ -235,6 +235,20 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-10-17 — Tempo de jogo removido
+
+- O Felipe pediu para remover toda a contagem de tempo de jogo: ela causava
+  muitos bugs nos jogos. Revertido o commit d77a532 inteiro (contador no FIQ r8
+  do gancho de V-blank do IGM e do trampolim da NOR, espelho na SRAM em 0xFFD0,
+  `/.superfw/playtime*.txt`, linha na tela de informações e no IGM,
+  `src/playtime.c/.h`, mensagens e README). Ficou só o `EMU_HARNESS` no IGM
+  (`INGAMEFLAGS` no Makefile), que é ferramenta de teste.
+- Os arquivos `/.superfw/playtime.txt`, `playtime-igm.txt` e
+  `playtime-session.txt` que já estão no SD não são mais usados e podem ser
+  apagados. Atenção: se a sessão anterior parou com um jogo SRAM aberto, os 4
+  bytes em 0xFFD0 da SRAM ficaram com o contador (antes eram devolvidos no boot).
+- Tamanhos: sd 521996, lite 489600 bytes.
 
 ### 2026-10-17 — Hacks/traduções, novidades do upstream e cheats por nome da ROM
 

@@ -162,7 +162,12 @@ What's new in this fork
   next to the original ROM as described above.
 - Cheats are looked up in this order: `Game.cht` next to the ROM,
   `/.superfw/cheats/Game.cht` (named after the ROM) and then the game code file
-  (`/.superfw/cheats/BPRE-01.cht`). A hack can have its own cheats this way. The
+  (`/.superfw/cheats/BPRE-01.cht`). A hack can have its own cheats this way. If
+  there is no file for the exact game code, the closest one is used: the same
+  game with another version (`BPRE-00`), then with another region letter
+  (`BPRP-01`, `BPRJ-01`...), so translations that change the region or version
+  still get the original game's cheats. With an IPS/UPS/BPS patch next to the
+  original ROM, the original header is used, so the cheats are found directly. The
   file has a title line followed by a line of raw (unencrypted) codes,
   `XXXXXXXX YYYY` pairs separated by spaces or `+`. Unencrypted CodeBreaker codes
   work as they are; encrypted GameShark/Action Replay codes must be decrypted
@@ -528,6 +533,11 @@ Novidades deste fork
 - Os cheats são procurados nesta ordem: `Jogo.cht` ao lado da ROM,
   `/.superfw/cheats/Jogo.cht` (com o nome da ROM) e depois o arquivo pelo código
   do jogo (`/.superfw/cheats/BPRE-01.cht`). Assim um hack pode ter cheats próprios.
+  Se não houver arquivo para o código exato, vale o mais próximo: o mesmo jogo em
+  outra versão (`BPRE-00`) e depois com outra letra de região (`BPRP-01`,
+  `BPRJ-01`...). Assim traduções que mudam a região ou a versão usam os cheats do
+  jogo original. Com o patch IPS/UPS/BPS ao lado da ROM original, vale o
+  cabeçalho original, e os cheats são achados direto.
   O arquivo tem uma linha de título seguida de uma linha de códigos crus (sem
   criptografia), em pares `XXXXXXXX YYYY` separados por espaço ou `+`. Códigos
   CodeBreaker sem criptografia funcionam como estão; códigos GameShark/Action

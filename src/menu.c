@@ -848,15 +848,25 @@ static void prepare_gba_cheats(const char *gcode, uint8_t ver, t_load_gba_lcfg *
       replace_extension(data->cheatsfn, ".cht");
       data->cheats_found = check_file_exists(data->cheatsfn);
     }
-    if (!data->cheats_found) {
-      WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
-      // Create a path using the game ID and version.
-      npf_snprintf(data->cheatsfn, sizeof(data->cheatsfn), CHEATS_PATH "%c%c%c%c-%02x.cht",
-                   gcode[0], gcode[1], gcode[2], gcode[3], ver);
-      data->cheats_found = check_file_exists(data->cheatsfn);
-      if (!data->cheats_found)
-        WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
+    // Then the game ID and version. Hacks and translations often change the
+    // region letter (4th char) or the version, so try the closest ones too:
+    // the same region with other versions first, then other regions.
+    static const char regions[] = "EPJDFISX";
+    for (unsigned r = 0; r <= sizeof(regions) - 1 && !data->cheats_found; r++) {
+      char reg = r ? regions[r - 1] : gcode[3];
+      if (r && reg == gcode[3])
+        continue;
+      for (unsigned v = 0; v < 4 && !data->cheats_found; v++) {
+        unsigned tver = v ? v - 1 : ver;
+        if (v && tver == ver)
+          continue;
+        npf_snprintf(data->cheatsfn, sizeof(data->cheatsfn), CHEATS_PATH "%c%c%c%c-%02x.cht",
+                     gcode[0], gcode[1], gcode[2], reg, tver);
+        data->cheats_found = check_file_exists(data->cheatsfn);
+      }
     }
+    if (!data->cheats_found)
+      WRITE_LOG("No cheat file found for game code %c%c%c%c", gcode[0], gcode[1], gcode[2], gcode[3]);
 
     // Load the cheats into memory if found.
     if (data->cheats_found) {

@@ -275,12 +275,16 @@ lado da ROM quanto com a ROM já traduzida.
 - Cheats: o `.cht` ao lado da ROM era achado mas nunca carregado (bug do
   upstream: a leitura ficava dentro do `if` do caminho pelo código do jogo). Agora
   a ordem é `<rom>.cht` ao lado da ROM, `/.superfw/cheats/<rom>.cht` e
-  `/.superfw/cheats/<código>-<versão>.cht`, sempre carregando o que achar.
+  `/.superfw/cheats/<código>-<versão>.cht`, sempre carregando o que achar. Sem
+  arquivo para o código exato, tenta o mesmo jogo em outras versões (00 a 02) e
+  depois com outras letras de região (E, P, J, D, F, I, S, X), para traduções que
+  mudam a região ou a versão do cabeçalho (pedido do Felipe: usar os cheats da
+  FireRed original na versão PT-BR).
 - Testado no harness com ROM sintética + IPS que move uma constante de WAITCNT:
   a constante nova é zerada, o cache é criado e o segundo carregamento (usando o
   cache) dá a mesma imagem. O bug dos 8 MB foi conferido com o
   `cli_patchengine` (IRQ em 0x500100 sai em 0x500100).
-- Tamanhos: sd 523884 de 524288 bytes (sobram 404), lite e chis ok.
+- Tamanhos: sd 523988 de 524288 bytes (sobram 300), lite e chis ok.
 - Arquivos: `src/softpatch.c/.h`, `src/loader.c`, `src/common.h`, `src/menu.c`,
   `src/patchengine.c/.h`, `tests/cli_patchengine.c`, README (EN/PT).
 

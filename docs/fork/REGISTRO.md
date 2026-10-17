@@ -62,6 +62,7 @@ mkfs.fat -C -F 32 sd.img 65536 && mmd -i sd.img ::/roms   # e mcopy dos arquivos
 | K | Carrossel de capas (estilo DSPico) | Pronto p/ teste no hardware (validado no emulador) | 11 |
 | L | Tempo de jogo | Pronto p/ teste no hardware (validado no emulador); próxima versão | 12 |
 | M | Papel de parede (por último) | Planejado | 13 |
+| N | Hacks e traduções: Patch Engine na ROM com patch, cheats por nome da ROM | Pronto p/ teste no hardware (validado no emulador) | 14 |
 
 Estados possíveis: Planejado → Em andamento → Pronto p/ teste no hardware → Validado no GBA SP.
 
@@ -234,6 +235,54 @@ do push e passa pelo teste do usuário no GBA SP antes de ser marcada como
 ## 5. Registro de alterações
 
 Entradas mais novas primeiro. Formato: data, o que mudou, arquivos e estado.
+
+### 2026-10-17 — Hacks/traduções, novidades do upstream e cheats por nome da ROM
+
+Origem: a FireRed Rev 1 com a tradução PT-BR (romhacking.net.br, tópico 3337)
+travava numa tela branca no GBA SP e rodava no emulador, tanto com o `.ips` ao
+lado da ROM quanto com a ROM já traduzida.
+- Causa: a BD interna é procurada pelo código do cabeçalho (BPRE v1, igual ao do
+  jogo original) e aplica ops em endereços fixos da ROM original (save Flash 128K
+  para SRAM, WAITCNT, gancho de IRQ do IGM). A tradução muda código do jogo, e
+  algum desses endereços cai em cima dele. Contorno validado pelo Felipe: ROM já
+  traduzida + "Patch Engine" (gerar patches) + save SRAM.
+- O save não ficava gravado com os patches do Patch Engine (SRAM e Save Direto).
+  Causa provável: bug do upstream na tabela de Flash v1 (usava os ponteiros da
+  estrutura v2), corrigido em davidgfnet/superfw f170dfb e trazido no merge
+  abaixo. Os `.patch` gerados por builds antigas precisam ser gerados de novo.
+- Merge de `davidgfnet/superfw` master (22 commits, 30/09 a 16/10, sem
+  conflitos): correção do Patch Engine em Flash v1; #49 (byte 3 do setor base e
+  do tamanho no Save Direto, deslocado 23 em vez de 24: corrompe saves em
+  cartões grandes); gravação de save mais segura (arquivo temporário e mais
+  checagens de erro); correções de RTC (ano, dia, dia da semana); resolução da
+  política de patch; lista de recentes protegida; mais informações do cartão SD;
+  ASM movido para C; traduções. Nada do upstream ficou de fora.
+- Bug próprio encontrado no Patch Engine (também no upstream): a geração lê a ROM
+  em blocos de 8 MB e os endereços eram relativos ao bloco, então achados depois
+  dos 8 MB viravam patches em endereços errados. Novo campo `baseoff` no
+  `t_patch_builder` (também em `tests/cli_patchengine.c`).
+- Patch Engine na ROM com patch: com o soft-patch ligado, "Automático" e
+  "Patch Engine" passam a usar resultados próprios da ROM patchada, guardados em
+  `/.superfw/patches/<rom>.<ext>-<tamanho do patch>.patch`
+  (`softpatch_cache_key`). Se ainda não existem, o `load_gba_rom` roda o Patch
+  Engine na imagem já patchada na SDRAM (logo depois do `softpatch_apply`), grava
+  o cache e aplica esses patches. Sem ops de IRQ no resultado, o IGM é
+  desligado nesse carregamento. Até lá, a BD serve só de palpite para o menu
+  (IGM, tipo de save). O SELECT da tela de informações recarrega os patches
+  certos. "Executa PatchEngine" com o patch ligado apaga o cache, e a pergunta
+  "gerar patches?" não aparece (o carregamento gera). "BD interna" escolhida à mão
+  continua usando a BD.
+- Cheats: o `.cht` ao lado da ROM era achado mas nunca carregado (bug do
+  upstream: a leitura ficava dentro do `if` do caminho pelo código do jogo). Agora
+  a ordem é `<rom>.cht` ao lado da ROM, `/.superfw/cheats/<rom>.cht` e
+  `/.superfw/cheats/<código>-<versão>.cht`, sempre carregando o que achar.
+- Testado no harness com ROM sintética + IPS que move uma constante de WAITCNT:
+  a constante nova é zerada, o cache é criado e o segundo carregamento (usando o
+  cache) dá a mesma imagem. O bug dos 8 MB foi conferido com o
+  `cli_patchengine` (IRQ em 0x500100 sai em 0x500100).
+- Tamanhos: sd 523884 de 524288 bytes (sobram 404), lite e chis ok.
+- Arquivos: `src/softpatch.c/.h`, `src/loader.c`, `src/common.h`, `src/menu.c`,
+  `src/patchengine.c/.h`, `tests/cli_patchengine.c`, README (EN/PT).
 
 ### 2026-09-29 — Tempo de jogo (próxima versão)
 

@@ -144,9 +144,29 @@ What's new in this fork
   off before loading. If a UPS or BPS patch was made for a different ROM, the page
   says so and the patch is not applied.
 - Patched ROMs can grow, up to 32MB.
-- Only for games loaded from the SD card (not for NOR flashing). Save type
-  detection and database patches use the original ROM header.
+- Only for games loaded from the SD card (not for NOR flashing).
+- With a patch on, "Automatic" and "Patch Engine" scan the patched ROM: the first
+  time the game loads, the Patch Engine runs on it after patching (the progress
+  bar fills a second time) and the result is kept in
+  `/.superfw/patches/<Game>.ips-<size>.patch`. The internal database is made for
+  the original game and can break hacks that change code (white screen), so only
+  pick it for text-only patches. "Run Patch Engine" on a patched ROM clears that
+  file so the next load scans again.
 - `tools/patch-demo/mkdemo.py` builds a test ROM with one patch of each kind.
+
+### ROM hacks and translations
+- Hacks keep the game code of the original game (Pokémon FireRed hacks still say
+  BPRE), so the internal patch database applies patches made for the original
+  code. If a hack freezes on a white screen, set the patch options to
+  "Patch Engine" (generate the patches when asked), or use the IPS/UPS/BPS patch
+  next to the original ROM as described above.
+- Cheats are looked up in this order: `Game.cht` next to the ROM,
+  `/.superfw/cheats/Game.cht` (named after the ROM) and then the game code file
+  (`/.superfw/cheats/BPRE-01.cht`). A hack can have its own cheats this way. The
+  file has a title line followed by a line of raw (unencrypted) codes,
+  `XXXXXXXX YYYY` pairs separated by spaces or `+`. Unencrypted CodeBreaker codes
+  work as they are; encrypted GameShark/Action Replay codes must be decrypted
+  first. Cheats need the in-game menu.
 
 ### Search by name
 - R+Start opens an on-screen keyboard in the SD tab. A types the selected letter,
@@ -489,9 +509,30 @@ Novidades deste fork
   e desliga o patch antes de carregar. Se o patch UPS ou BPS foi feito para outra
   versão da ROM, a tela avisa e ele não é aplicado.
 - A ROM pode crescer com o patch, até 32 MB.
-- Só vale para jogos carregados do SD (não para a gravação na NOR). A detecção de
-  save e os patches da base de dados usam o cabeçalho da ROM original.
+- Só vale para jogos carregados do SD (não para a gravação na NOR).
+- Com o patch ligado, "Automático" e "Patch Engine" analisam a ROM já patchada: na
+  primeira vez que o jogo carrega, o Patch Engine roda nela depois do patch (a
+  barra de progresso enche uma segunda vez) e o resultado fica guardado em
+  `/.superfw/patches/<Jogo>.ips-<tamanho>.patch`. A BD interna é feita para o jogo
+  original e pode quebrar hacks que mudam o código (tela branca); use-a só com
+  patches que mudam apenas texto. "Executa PatchEngine" numa ROM com patch apaga
+  esse arquivo, e o próximo carregamento analisa de novo.
 - `tools/patch-demo/mkdemo.py` cria uma ROM de teste com um patch de cada tipo.
+
+### ROM hacks e traduções
+- Hacks mantêm o código do jogo original (hacks de Pokémon FireRed continuam
+  BPRE), então a BD interna de patches aplica patches feitos para o código
+  original. Se um hack travar numa tela branca, troque as opções de patch para
+  "Patch Engine" (e gere os patches quando perguntar), ou use o patch
+  IPS/UPS/BPS ao lado da ROM original, como explicado acima.
+- Os cheats são procurados nesta ordem: `Jogo.cht` ao lado da ROM,
+  `/.superfw/cheats/Jogo.cht` (com o nome da ROM) e depois o arquivo pelo código
+  do jogo (`/.superfw/cheats/BPRE-01.cht`). Assim um hack pode ter cheats próprios.
+  O arquivo tem uma linha de título seguida de uma linha de códigos crus (sem
+  criptografia), em pares `XXXXXXXX YYYY` separados por espaço ou `+`. Códigos
+  CodeBreaker sem criptografia funcionam como estão; códigos GameShark/Action
+  Replay criptografados precisam ser decodificados antes. Cheats precisam do menu
+  in-game.
 
 ### Busca por nome
 - R+Start abre um teclado na tela, na aba do SD. A digita a letra escolhida, e a

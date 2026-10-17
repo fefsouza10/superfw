@@ -584,6 +584,7 @@ bool generate_patches_progress(const char *fn, unsigned fs) {
     }
 
     // Process patches. Adds them to the existing patchset.
+    pb.baseoff = i;
     set_supercard_mode(MAPPED_SDRAM, true, false);
     patchengine_process_rom((uint32_t*)hiscratch, blksize, &pb, upd_pe_prog);
     set_supercard_mode(MAPPED_SDRAM, true, true);
@@ -660,9 +661,44 @@ void sram_battery_test_callback(bool confirm) {
 }
 
 
+// With a soft-patch on, the Patch Engine can always be used: it runs on the
+// patched ROM while loading, the first time (results are cached).
+static bool engine_avail(const t_load_gba_info *info) {
+  return info->patches_cache_found || info->spatch_on;
+}
+
+// True if the Patch Engine must run on the patched ROM while loading it.
+static bool spatch_needs_engine(const t_load_gba_info *info) {
+  return info->spatch_on && info->patch_type == PatchEngine && !info->patches_cache_found;
+}
+
 static const t_patch * get_game_patch(const t_load_gba_info *info) {
+  // Until the patched ROM goes through the Patch Engine, the database entry
+  // is the best guess of what the game supports (IGM, save type...).
+  if (spatch_needs_engine(info))
+    return info->patches_datab_found ? &info->patches_datab : NULL;
   return info->patch_type == PatchDatabase && info->patches_datab_found ? &info->patches_datab :
          info->patch_type == PatchEngine   && info->patches_cache_found ? &info->patches_cache : NULL;
+}
+
+// Loads the Patch Engine results for the ROM, or for the soft-patched ROM.
+static void lookup_engine_patches(t_load_gba_info *info) {
+  const char *fn = info->romfn;
+  if (info->spatch_on) {
+    char key[MAX_FN_LEN];
+    softpatch_cache_key(&info->spatch, key);
+    info->patches_cache_found = load_cached_patches(key, &info->patches_cache);
+    return;
+  }
+
+  // Attempt to load any existing patch and check also the PE cache dir.
+  info->patches_cache_found = load_rom_patches(fn, &info->patches_cache);
+  if (!info->patches_cache_found) {
+    WRITE_LOG("No patch file found for '%s'", fn);
+    info->patches_cache_found = load_cached_patches(fn, &info->patches_cache);
+    if (!info->patches_cache_found)
+      WRITE_LOG("No patch file found in patches cache dir for '%s'", fn);
+  }
 }
 
 bool ingame_menu_avail_sdram(const t_load_gba_info *info) {
@@ -763,18 +799,11 @@ static bool prepare_gba_info(
     WRITE_LOG("No patches in PatchDB found for '%s' with gamecode %c%c%c%c-%d",
               fn, gamecode[0], gamecode[1], gamecode[2], gamecode[3], (int)gamecode[4]);
 
-  // Attempt to load any existing patch and check also the PE cache dir.
-  info->patches_cache_found = load_rom_patches(fn, &info->patches_cache);
-  if (!info->patches_cache_found) {
-    WRITE_LOG("No patch file found for '%s'", fn);
-    info->patches_cache_found = load_cached_patches(fn, &info->patches_cache);
-    if (!info->patches_cache_found)
-      WRITE_LOG("No patch file found in patches cache dir for '%s'", fn);
-  }
+  lookup_engine_patches(info);
 
   // If PatchAuto is selected, resolve it. Downgrade if not found.
   if (st->patch_policy == PatchAuto) {
-    if (info->patches_cache_found)
+    if (engine_avail(info))
       info->patch_type = PatchEngine;      // Try existing patches
     else if (info->patches_datab_found)
       info->patch_type = PatchDatabase;    // Try the database then
@@ -787,7 +816,7 @@ static bool prepare_gba_info(
 
     // Downgrade to no patches if the specified was not found.
     if ((info->patch_type == PatchDatabase && !info->patches_datab_found) ||
-        (info->patch_type == PatchEngine   && !info->patches_cache_found))
+        (info->patch_type == PatchEngine   && !engine_avail(info)))
       info->patch_type = PatchNone;
   }
 
@@ -807,30 +836,40 @@ static void prepare_gba_cheats(const char *gcode, uint8_t ver, t_load_gba_lcfg *
   data->cheats_size = 0;
   data->cheats_found = false;
   if (enable_cheats) {
+    // Look for a file named after the ROM first (next to it, then in the
+    // cheats dir), so that ROM hacks and translations (that share the game
+    // code with the original game) can have their own cheats.
     strcpy(data->cheatsfn, fn);
     replace_extension(data->cheatsfn, ".cht");
     data->cheats_found = check_file_exists(data->cheatsfn);
+    if (!data->cheats_found) {
+      WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
+      npf_snprintf(data->cheatsfn, sizeof(data->cheatsfn) - 8, CHEATS_PATH "%s", file_basename(fn));
+      replace_extension(data->cheatsfn, ".cht");
+      data->cheats_found = check_file_exists(data->cheatsfn);
+    }
     if (!data->cheats_found) {
       WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
       // Create a path using the game ID and version.
       npf_snprintf(data->cheatsfn, sizeof(data->cheatsfn), CHEATS_PATH "%c%c%c%c-%02x.cht",
                    gcode[0], gcode[1], gcode[2], gcode[3], ver);
       data->cheats_found = check_file_exists(data->cheatsfn);
-      WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
+      if (!data->cheats_found)
+        WRITE_LOG("No cheat file found at '%s'", data->cheatsfn);
+    }
 
-      // Load the cheats into memory if enabled.
-      if (data->cheats_found) {
-        // Load the cheats to the ROM area, just after the font pack. This is for easier relocation.
-        uint8_t *cheat_area = (uint8_t*)(ROM_FONTBASE_U8 + font_block_size());
-        unsigned max_area = 1536*1024 - font_block_size();    // 1.5MB is reserved at the end.
-        int cheatsz = open_read_cheats(cheat_area, max_area, data->cheatsfn);
-        if (cheatsz < 0)
-          data->cheats_found = false;
-        else
-          data->cheats_size = cheatsz;
+    // Load the cheats into memory if found.
+    if (data->cheats_found) {
+      // Load the cheats to the ROM area, just after the font pack. This is for easier relocation.
+      uint8_t *cheat_area = (uint8_t*)(ROM_FONTBASE_U8 + font_block_size());
+      unsigned max_area = 1536*1024 - font_block_size();    // 1.5MB is reserved at the end.
+      int cheatsz = open_read_cheats(cheat_area, max_area, data->cheatsfn);
+      if (cheatsz < 0)
+        data->cheats_found = false;
+      else
+        data->cheats_size = cheatsz;
 
-        WRITE_LOG("Loaded cheats returned %d", cheatsz);
-      }
+      WRITE_LOG("Loaded cheats returned %d", cheatsz);
     }
   }
   data->use_cheats = enable_cheats && data->cheats_found && prefer_cheats;
@@ -902,7 +941,8 @@ static void browser_open_gba(const char *fn, uint32_t fs, bool prompt_patchgen) 
       bool no_engine  = (ld_sett.patch_policy == PatchEngine && !spop.p.load.i.patches_cache_found);
       bool issfw = is_superfw(rmh);
 
-      if (prompt_patchgen && !issfw && (no_patches || no_engine)) {
+      // With a soft-patch on, the engine runs while loading (on the patched ROM).
+      if (prompt_patchgen && !issfw && !spop.p.load.i.spatch_on && (no_patches || no_engine)) {
         // No patches found, ask the user if they want to generate patches
         // using the patch engine.
         spop.qpop.message = msgs[lang_id][no_patches ? MSG_Q1_NOPATCH : MSG_Q1_PATCHENG];
@@ -2838,6 +2878,14 @@ static void keypress_popup_loadgba(unsigned newkeys) {
   if ((newkeys & KEY_BUTTSEL) && spop.submenu == GbaLoadPopInfo &&
       spop.p.load.i.spatch_found && spop.p.load.i.spatch.valid) {
     spop.p.load.i.spatch_on = !spop.p.load.i.spatch_on;
+    // Patch Engine results differ for the original and the patched ROM.
+    lookup_engine_patches(&spop.p.load.i);
+    if (spop.p.load.i.patch_type != PatchNone) {
+      spop.p.load.i.patch_type = engine_avail(&spop.p.load.i) ? PatchEngine :
+                                 spop.p.load.i.patches_datab_found ? PatchDatabase : PatchNone;
+    }
+    if (!ingame_menu_avail_sdram(&spop.p.load.i))
+      spop.p.load.i.ingame_menu_enabled = false;
     // A bigger ROM might not leave space for DirSav anymore.
     if (!dirsav_avail_sdram(&spop.p.load.i) && spop.p.load.i.use_dsaving) {
       spop.p.load.i.use_dsaving = false;
@@ -2871,7 +2919,7 @@ static void keypress_popup_loadgba(unsigned newkeys) {
     }
 
     // Handle the different cases where the user attempts to select an invalid option.
-    if (!spop.p.load.i.patches_cache_found && spop.p.load.i.patch_type == PatchEngine)
+    if (!engine_avail(&spop.p.load.i) && spop.p.load.i.patch_type == PatchEngine)
       spop.p.load.i.patch_type = PatchDatabase;  // Might be invalid, handled below.
     if (!spop.p.load.i.patches_datab_found && spop.p.load.i.patch_type == PatchDatabase)
       spop.p.load.i.patch_type = PatchNone;
@@ -2920,7 +2968,7 @@ static void keypress_popup_loadgba(unsigned newkeys) {
     // If the database has no entry, then do not let the user select that mode.
     if (!spop.p.load.i.patches_datab_found && spop.p.load.i.patch_type == PatchDatabase)
       spop.p.load.i.patch_type = PatchEngine;  // Might be invalid, handled below.
-    if (!spop.p.load.i.patches_cache_found && spop.p.load.i.patch_type == PatchEngine)
+    if (!engine_avail(&spop.p.load.i) && spop.p.load.i.patch_type == PatchEngine)
       spop.p.load.i.patch_type = PatchNone;
 
     if (!dirsav_avail_sdram(&spop.p.load.i))
@@ -2963,10 +3011,24 @@ static void keypress_popup_loadgba(unsigned newkeys) {
       }
     }
     else if (spop.submenu == GbaLoadPopPatch && spop.selector == GBAPatchGen) {
-      generate_patches_progress(spop.p.load.i.romfn, spop.p.load.i.romfs);
-      spop.alert_msg = msgs[lang_id][MSG_PATCHGEN_OK];
-      // Try/Load the just-generated patches.
-      spop.p.load.i.patches_cache_found = load_cached_patches(spop.p.load.i.romfn, &spop.p.load.i.patches_cache);
+      if (spop.p.load.i.spatch_on) {
+        // The patched ROM only exists once loaded: drop the cached results so
+        // that the Patch Engine runs again while loading it.
+        char key[MAX_FN_LEN], tmp[MAX_FN_LEN];
+        softpatch_cache_key(&spop.p.load.i.spatch, key);
+        strcpy(tmp, PATCHDB_PATH);
+        strcat(tmp, key);
+        replace_extension(tmp, ".patch");
+        f_unlink(tmp);
+        spop.p.load.i.patches_cache_found = false;
+        spop.p.load.i.patch_type = PatchEngine;
+        spop.alert_msg = msgs[lang_id][MSG_OK_GENERIC];
+      } else {
+        generate_patches_progress(spop.p.load.i.romfn, spop.p.load.i.romfs);
+        spop.alert_msg = msgs[lang_id][MSG_PATCHGEN_OK];
+        // Try/Load the just-generated patches.
+        lookup_engine_patches(&spop.p.load.i);
+      }
     }
     else if (spop.submenu == GbaLoadPopLoadS && spop.selector == GBALdRemember) {
       // Save settings to disk now!
@@ -3016,6 +3078,10 @@ static void keypress_popup_loadgba(unsigned newkeys) {
       if (spop.p.load.i.ingame_menu_enabled)
         playtime_start(spop.p.load.i.romfn, p ? p->save_mode : -1);
 
+      char pekey[MAX_FN_LEN];
+      if (spop.p.load.i.spatch_on)
+        softpatch_cache_key(&spop.p.load.i.spatch, pekey);
+
       unsigned err = load_gba_rom(
         spop.p.load.i.romfn, spop.p.load.i.romfs,
         spop.p.load.l.sram_save_type == SaveDisable ? NULL : spop.p.load.l.savefn, p,
@@ -3024,6 +3090,7 @@ static void keypress_popup_loadgba(unsigned newkeys) {
         spop.p.load.i.rtc_patch_enabled ? &rtci : NULL,
         spop.p.load.l.use_cheats ? spop.p.load.l.cheats_size : 0,
         spop.p.load.i.spatch_on ? &spop.p.load.i.spatch : NULL,
+        spatch_needs_engine(&spop.p.load.i) ? pekey : NULL,
         loadrom_progress);
       if (err) {
         // Show any errors that might have happened!

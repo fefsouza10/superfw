@@ -23,6 +23,7 @@ typedef enum {
 typedef struct struct_t_softpatch {
   char fn[256];         // Patch file path (next to the ROM)
   uint32_t tsize;       // Size of the patched ROM (IPS: ROM size until scanned)
+  uint32_t psize;       // Patch file size
   uint8_t type;         // t_spatch_type
   bool valid;           // Header parsed OK and matches the ROM size.
 } t_softpatch;
@@ -39,5 +40,10 @@ uint32_t softpatch_target_size(const t_softpatch *sp, uint32_t romfs);
 // Must be called with the SD card interface disabled and SDRAM writable.
 // Returns zero on success.
 unsigned softpatch_apply(const t_softpatch *sp, const char *romfn, uint32_t romfs, uint32_t tsize);
+
+// Name used to cache Patch Engine results for the patched ROM (they differ
+// from the original ROM ones). Includes the patch size so that a different
+// patch version does not reuse stale results.
+void softpatch_cache_key(const t_softpatch *sp, char *key);
 
 #endif

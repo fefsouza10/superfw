@@ -152,7 +152,9 @@ What's new in this fork
   file has a title line followed by a line of raw (unencrypted) codes,
   `XXXXXXXX YYYY` pairs separated by spaces or `+`. Unencrypted CodeBreaker codes
   work as they are; encrypted GameShark/Action Replay codes must be decrypted
-  first. Cheats need the in-game menu.
+  first. Cheats need the in-game menu. The cheat pack (one `ABCD-EF.cht` per game
+  code and version) is built from https://github.com/davidgfnet/superfw-cheats
+  with `scripts/pack-cheats.py`; unzip it into `/.superfw/cheats/`.
 
 ### Search by name
 - R+Start opens an on-screen keyboard in the SD tab. A types the selected letter,
@@ -504,6 +506,9 @@ Novidades deste fork
   CodeBreaker sem criptografia funcionam como estão; códigos GameShark/Action
   Replay criptografados precisam ser decodificados antes. Cheats precisam do menu
   in-game.
+  O pacote de cheats (um `ABCD-EF.cht` por código e versão) vem de
+  https://github.com/davidgfnet/superfw-cheats, gerado com
+  `scripts/pack-cheats.py`; descompacte em `/.superfw/cheats/`.
 
 ### Busca por nome
 - R+Start abre um teclado na tela, na aba do SD. A digita a letra escolhida, e a
